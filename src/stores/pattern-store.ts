@@ -31,8 +31,11 @@ export interface PatternStoreActions {
   toggleStep: (channelId: string, stepIndex: number) => void;
   setChannelPan: (channelId: string, pan: number) => void;
   setChannelVolume: (channelId: string, volume: number) => void;
+  toggleMute: (channelId: string) => void;
   toggleChannelMute: (channelId: string) => void;
+  toggleSolo: (channelId: string) => void;
   toggleChannelSolo: (channelId: string) => void;
+  clearChannelSteps: (channelId: string) => void;
   setChannelPitch: (channelId: string, pitch: number) => void;
   setChannelTimeShift: (channelId: string, timeShift: number) => void;
   setChannelName: (channelId: string, name: string) => void;
@@ -110,6 +113,22 @@ const DEFAULT_CHANNELS: Channel[] = [
   },
 ];
 
+/**
+ * Computes step data sent to native DSP engine, masking steps
+ * for muted channels or non-soloed channels when solo is active.
+ */
+export function computeAudibleChannels(channels: Channel[]) {
+  const hasSolo = channels.some((c) => c.isSolo);
+  return channels.map((c) => {
+    const isAudible = hasSolo ? (c.isSolo && !c.isMuted) : !c.isMuted;
+    return {
+      id: c.id,
+      name: c.name,
+      steps: isAudible ? c.steps : new Array(c.steps.length).fill(false),
+    };
+  });
+}
+
 export const usePatternStore = create<PatternStore>()((set) => ({
   activePatternIndex: 0,
   currentStep: 0,
@@ -129,14 +148,8 @@ export const usePatternStore = create<PatternStore>()((set) => ({
         return { ...ch, steps: newSteps };
       });
 
-      // Automatically sync pattern updates to backend audio engine
-      syncPattern(
-        nextChannels.map((c) => ({
-          id: c.id,
-          name: c.name,
-          steps: c.steps,
-        }))
-      ).catch(() => {});
+      // Automatically sync audible pattern updates to backend audio engine
+      syncPattern(computeAudibleChannels(nextChannels)).catch(() => {});
 
       return {
         channels: nextChannels,
@@ -161,19 +174,52 @@ export const usePatternStore = create<PatternStore>()((set) => ({
       ),
     })),
 
-  toggleChannelMute: (channelId: string) =>
-    set((state) => ({
-      channels: state.channels.map((ch) =>
+  toggleMute: (channelId: string) =>
+    set((state) => {
+      const nextChannels = state.channels.map((ch) =>
         ch.id === channelId ? { ...ch, isMuted: !ch.isMuted } : ch
-      ),
-    })),
+      );
+      syncPattern(computeAudibleChannels(nextChannels)).catch(() => {});
+      return { channels: nextChannels };
+    }),
+
+  toggleChannelMute: (channelId: string) =>
+    set((state) => {
+      const nextChannels = state.channels.map((ch) =>
+        ch.id === channelId ? { ...ch, isMuted: !ch.isMuted } : ch
+      );
+      syncPattern(computeAudibleChannels(nextChannels)).catch(() => {});
+      return { channels: nextChannels };
+    }),
+
+  toggleSolo: (channelId: string) =>
+    set((state) => {
+      const nextChannels = state.channels.map((ch) =>
+        ch.id === channelId ? { ...ch, isSolo: !ch.isSolo } : ch
+      );
+      syncPattern(computeAudibleChannels(nextChannels)).catch(() => {});
+      return { channels: nextChannels };
+    }),
 
   toggleChannelSolo: (channelId: string) =>
-    set((state) => ({
-      channels: state.channels.map((ch) =>
+    set((state) => {
+      const nextChannels = state.channels.map((ch) =>
         ch.id === channelId ? { ...ch, isSolo: !ch.isSolo } : ch
-      ),
-    })),
+      );
+      syncPattern(computeAudibleChannels(nextChannels)).catch(() => {});
+      return { channels: nextChannels };
+    }),
+
+  clearChannelSteps: (channelId: string) =>
+    set((state) => {
+      const nextChannels = state.channels.map((ch) =>
+        ch.id === channelId
+          ? { ...ch, steps: new Array(state.stepCount).fill(false) }
+          : ch
+      );
+      syncPattern(computeAudibleChannels(nextChannels)).catch(() => {});
+      return { channels: nextChannels };
+    }),
 
   setChannelPitch: (channelId: string, pitch: number) =>
     set((state) => ({
@@ -254,13 +300,7 @@ export const usePatternStore = create<PatternStore>()((set) => ({
         isSynth,
       };
       const nextChannels = [...state.channels, newChannel];
-      syncPattern(
-        nextChannels.map((c) => ({
-          id: c.id,
-          name: c.name,
-          steps: c.steps,
-        }))
-      ).catch(() => {});
+      syncPattern(computeAudibleChannels(nextChannels)).catch(() => {});
       return { channels: nextChannels };
     }),
 
@@ -274,13 +314,7 @@ export const usePatternStore = create<PatternStore>()((set) => ({
   removeChannel: (channelId: string) =>
     set((state) => {
       const nextChannels = state.channels.filter((ch) => ch.id !== channelId);
-      syncPattern(
-        nextChannels.map((c) => ({
-          id: c.id,
-          name: c.name,
-          steps: c.steps,
-        }))
-      ).catch(() => {});
+      syncPattern(computeAudibleChannels(nextChannels)).catch(() => {});
       return { channels: nextChannels };
     }),
 
@@ -290,13 +324,7 @@ export const usePatternStore = create<PatternStore>()((set) => ({
         ...ch,
         steps: new Array(state.stepCount).fill(false),
       }));
-      syncPattern(
-        nextChannels.map((c) => ({
-          id: c.id,
-          name: c.name,
-          steps: c.steps,
-        }))
-      ).catch(() => {});
+      syncPattern(computeAudibleChannels(nextChannels)).catch(() => {});
       return { channels: nextChannels };
     }),
 
@@ -328,13 +356,7 @@ export const usePatternStore = create<PatternStore>()((set) => ({
         }
         return { ...ch, steps: nextSteps };
       });
-      syncPattern(
-        nextChannels.map((c) => ({
-          id: c.id,
-          name: c.name,
-          steps: c.steps,
-        }))
-      ).catch(() => {});
+      syncPattern(computeAudibleChannels(nextChannels)).catch(() => {});
       return {
         stepCount,
         channels: nextChannels,
@@ -344,11 +366,5 @@ export const usePatternStore = create<PatternStore>()((set) => ({
 
 // Eagerly sync default pattern upon initialization
 if (typeof window !== "undefined") {
-  syncPattern(
-    DEFAULT_CHANNELS.map((c) => ({
-      id: c.id,
-      name: c.name,
-      steps: c.steps,
-    }))
-  ).catch(() => {});
+  syncPattern(computeAudibleChannels(DEFAULT_CHANNELS)).catch(() => {});
 }

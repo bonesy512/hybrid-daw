@@ -3,6 +3,7 @@
 import React, { useRef, useState } from "react";
 import {
   FolderOpen,
+  ListRestart,
   Sparkles,
   Trash2,
   X,
@@ -320,6 +321,18 @@ function ChannelSettingsModalContent({
           >
             <Trash2 className="size-3" />
             <span>DELETE TRACK</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              usePatternStore.getState().clearChannelSteps(channel.id);
+            }}
+            className="flex items-center gap-1.5 rounded-xs border border-zinc-800 bg-zinc-900 px-2.5 py-1 font-mono text-[10px] text-zinc-400 hover:border-red-800 hover:text-red-400 transition-colors"
+            title="Clear all active steps on this channel"
+          >
+            <ListRestart className="size-3" />
+            <span>CLEAR STEPS</span>
           </button>
 
           <button

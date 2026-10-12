@@ -132,8 +132,9 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
   const toggleStep = usePatternStore((state) => state.toggleStep);
   const setChannelPan = usePatternStore((state) => state.setChannelPan);
   const setChannelVolume = usePatternStore((state) => state.setChannelVolume);
-  const toggleChannelMute = usePatternStore((state) => state.toggleChannelMute);
-  const toggleChannelSolo = usePatternStore((state) => state.toggleChannelSolo);
+  const toggleMute = usePatternStore((state) => state.toggleMute);
+  const toggleSolo = usePatternStore((state) => state.toggleSolo);
+  const clearChannelSteps = usePatternStore((state) => state.clearChannelSteps);
   const addChannel = usePatternStore((state) => state.addChannel);
   const clearPattern = usePatternStore((state) => state.clearPattern);
   const setCurrentStep = usePatternStore((state) => state.setCurrentStep);
@@ -549,7 +550,10 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
-                      onClick={() => toggleChannelMute(channel.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleMute(channel.id);
+                      }}
                       className={cn(
                         "flex size-5 items-center justify-center rounded-[2px] border font-mono text-[9px] font-bold transition-all",
                         channel.isMuted
@@ -562,7 +566,10 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
                     </button>
                     <button
                       type="button"
-                      onClick={() => toggleChannelSolo(channel.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleSolo(channel.id);
+                      }}
                       className={cn(
                         "flex size-5 items-center justify-center rounded-[2px] border font-mono text-[9px] font-bold transition-all",
                         channel.isSolo
@@ -708,6 +715,26 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
                         title="Load Sample (📂)..."
                       >
                         <FolderOpen className="size-3" />
+                      </div>
+
+                      {/* Clear Channel Steps Action */}
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          clearChannelSteps(channel.id);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.stopPropagation();
+                            clearChannelSteps(channel.id);
+                          }
+                        }}
+                        className="hidden size-5 items-center justify-center rounded-[2px] text-zinc-500 hover:text-red-400 hover:bg-zinc-800 group-hover/btn:flex transition-colors cursor-pointer"
+                        title="Clear track steps (reset to empty)"
+                      >
+                        <ListRestart className="size-3" />
                       </div>
 
                       <div

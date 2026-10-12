@@ -879,7 +879,18 @@ export const PianoRollCanvas: React.FC = () => {
       <div className="relative flex-1 h-full overflow-hidden">
         <canvas
           ref={gridCanvasRef}
-          onContextMenu={(e) => e.preventDefault()}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            const canvas = gridCanvasRef.current;
+            if (!canvas) return;
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const hit = findNoteAt(x, y);
+            if (hit) {
+              removeNote(hit.note.id);
+            }
+          }}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}

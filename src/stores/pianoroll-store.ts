@@ -44,6 +44,8 @@ export interface PianoRollActions {
   setViewRange: (range: Partial<ViewRange>) => void;
   addNote: (note: Omit<MidiNote, "id" | "isSelected"> & Partial<Pick<MidiNote, "id" | "isSelected">>) => string;
   removeNote: (id: string) => void;
+  deleteNote: (id: string) => void;
+  clearAllNotes: (channelId?: string) => void;
   updateNote: (id: string, partialNote: Partial<MidiNote>) => void;
   selectNote: (id: string, multiSelect?: boolean) => void;
   selectAllNotes: () => void;
@@ -167,6 +169,22 @@ export const usePianoRollStore = create<PianoRollStore>()((set, get) => ({
     set((state) => ({
       notes: state.notes.filter((n) => n.id !== id),
     })),
+
+  deleteNote: (id: string) =>
+    set((state) => ({
+      notes: state.notes.filter((n) => n.id !== id),
+    })),
+
+  clearAllNotes: (channelId?: string) =>
+    set((state) => {
+      const targetChannel = channelId ?? state.selectedChannelId;
+      if (!targetChannel) {
+        return { notes: [] };
+      }
+      return {
+        notes: state.notes.filter((n) => n.channelId !== targetChannel),
+      };
+    }),
 
   updateNote: (id: string, partialNote: Partial<MidiNote>) =>
     set((state) => ({

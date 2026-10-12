@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   BoxSelect,
   ChevronDown,
@@ -59,8 +59,31 @@ export const PianoRoll: React.FC = () => {
   const setChordStamp = usePianoRollStore((s) => s.setChordStamp);
   const quantizeSelectedNotes = usePianoRollStore((s) => s.quantizeSelectedNotes);
   const deleteSelectedNotes = usePianoRollStore((s) => s.deleteSelectedNotes);
+  const clearAllNotes = usePianoRollStore((s) => s.clearAllNotes);
   const viewRange = usePianoRollStore((s) => s.viewRange);
   const setViewRange = usePianoRollStore((s) => s.setViewRange);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        deleteSelectedNotes();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [deleteSelectedNotes]);
 
   const channels = usePatternStore((s) => s.channels);
   const activeChannel =
@@ -504,9 +527,20 @@ export const PianoRoll: React.FC = () => {
             type="button"
             onClick={deleteSelectedNotes}
             className="flex size-7 items-center justify-center rounded-xs border border-zinc-800 bg-black/40 text-zinc-400 hover:border-zinc-700 hover:text-red-400 transition-colors"
-            title="Delete Selected Notes"
+            title="Delete Selected Notes (Del / Backspace)"
           >
             <Trash2 className="size-3.5" />
+          </button>
+
+          {/* Clear All Notes for Active Channel */}
+          <button
+            type="button"
+            onClick={() => clearAllNotes(selectedChannelId)}
+            className="flex h-7 items-center gap-1 rounded-xs border border-zinc-800 bg-black/40 px-2 font-mono text-[10px] font-bold text-zinc-400 hover:border-red-900/60 hover:text-red-400 hover:bg-red-950/20 transition-colors"
+            title="Clear all notes for currently selected channel"
+          >
+            <Trash2 className="size-3 text-red-500/70" />
+            <span>CLEAR NOTES</span>
           </button>
 
           <div className="h-5 w-px bg-zinc-800" />

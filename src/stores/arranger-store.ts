@@ -268,7 +268,7 @@ const DEFAULT_TRACKS: ArrangerTrack[] = [
     color: "#ff4400", // Safety Orange
     isMuted: false,
     isSolo: false,
-    isArmed: true,
+    isArmed: false,
     volume: 0.85,
     pan: 0,
     height: 72,
@@ -332,17 +332,11 @@ export const useArrangerStore = create<ArrangerStore>()((set, get) => ({
     const state = get();
     if (state.isRecordingActive) return null;
 
-    // Identify armed tracks, or arm the first audio track
-    let armedTrack = state.tracks.find((t) => t.isArmed);
+    // Check if any track actually has isArmed: true before invoking native recording stream
+    const armedTrack = state.tracks.find((t) => t.isArmed);
     if (!armedTrack) {
-      const target = state.tracks.find((t) => t.type === "audio") || state.tracks[0];
-      if (target) {
-        state.toggleTrackArm(target.id);
-        armedTrack = target;
-      }
+      return null;
     }
-
-    if (!armedTrack) return null;
 
     const trackIndex = state.tracks.findIndex((t) => t.id === armedTrack.id);
     const transportState = useTransportStore.getState();
@@ -361,8 +355,15 @@ export const useArrangerStore = create<ArrangerStore>()((set, get) => ({
         activeRecordingTrackId: armedTrack.id,
       });
       return filePath;
-    } catch (err) {
-      console.error("[ArrangerStore] startRecording error:", err);
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes("No default audio input device available")) {
+        console.warn(
+          "[ArrangerStore] Audio recording skipped: No default audio input device available"
+        );
+      } else {
+        console.warn("[ArrangerStore] Audio recording unavailable:", errMsg);
+      }
       return null;
     }
   },

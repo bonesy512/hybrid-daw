@@ -108,7 +108,7 @@ impl AudioRecorder {
         let host = cpal::default_host();
         let device = host
             .default_input_device()
-            .ok_or_else(|| "No default audio input device available on this system".to_string())?;
+            .ok_or_else(|| "No default audio input device available".to_string())?;
 
         let default_config = device
             .default_input_config()

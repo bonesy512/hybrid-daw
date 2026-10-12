@@ -294,7 +294,10 @@ export const ArrangerTimeline: React.FC<ArrangerTimelineProps> = ({
                   <div className="flex items-center gap-1 shrink-0">
                     <button
                       type="button"
-                      onClick={() => toggleTrackMute(track.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleTrackMute(track.id);
+                      }}
                       className={cn(
                         "flex size-5 items-center justify-center rounded-[2px] border text-[8px] font-bold transition-all",
                         track.isMuted
@@ -307,7 +310,10 @@ export const ArrangerTimeline: React.FC<ArrangerTimelineProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => toggleTrackSolo(track.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleTrackSolo(track.id);
+                      }}
                       className={cn(
                         "flex size-5 items-center justify-center rounded-[2px] border text-[8px] font-bold transition-all",
                         track.isSolo
@@ -320,7 +326,10 @@ export const ArrangerTimeline: React.FC<ArrangerTimelineProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => toggleTrackArm(track.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleTrackArm(track.id);
+                      }}
                       className={cn(
                         "flex size-5 items-center justify-center rounded-[2px] border text-[8px] font-bold transition-all",
                         track.isArmed
@@ -333,7 +342,10 @@ export const ArrangerTimeline: React.FC<ArrangerTimelineProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => removeTrack(track.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeTrack(track.id);
+                      }}
                       className="hidden size-5 items-center justify-center rounded-[2px] text-zinc-600 hover:text-red-400 group-hover:flex"
                       title="Delete Track"
                     >
