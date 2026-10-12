@@ -13,7 +13,7 @@ use crate::audio::{
     decode_audio_file, ensure_factory_samples, AudioCommand, AudioDeviceDescriptor, AudioEngine,
     AudioRecorder, BrowserEntry, ChannelSyncData, CompressorParams, EqualizerParams,
     MidiDeviceDescriptor, MidiManager, ParsedMidiFile, RecordedClipMetadata, SampleData,
-    SampleMetadata, SPECTRUM_BINS,
+    SampleMetadata, SynthParams, SPECTRUM_BINS,
 };
 
 pub struct AudioState {
@@ -25,6 +25,7 @@ pub struct AudioState {
     pub recorder: Mutex<AudioRecorder>,
     pub compressor_meters: [Arc<AtomicU32>; 9],
     pub spectrum_meters: [Arc<[AtomicU32; SPECTRUM_BINS]>; 9],
+    pub synth_voice_meters: [Arc<AtomicU32>; 8],
 }
 
 // In CPAL on Windows, Stream contains !Send raw COM handles, but holding it
@@ -41,7 +42,11 @@ fn start_audio(state: tauri::State<'_, AudioState>) -> Result<String, String> {
         return Ok("Audio engine already active".into());
     }
 
-    match AudioEngine::start(state.compressor_meters.clone(), state.spectrum_meters.clone()) {
+    match AudioEngine::start(
+        state.compressor_meters.clone(),
+        state.spectrum_meters.clone(),
+        state.synth_voice_meters.clone(),
+    ) {
         Ok((cmd_prod, midi_prod, stream)) => {
             *prod_guard = Some(cmd_prod);
             *stream_guard = Some(stream);
@@ -418,6 +423,97 @@ fn get_spectrum_peaks(
     }
 }
 
+#[tauri::command]
+fn set_synth_params(
+    track_index: usize,
+    params: SynthParams,
+    state: tauri::State<'_, AudioState>,
+) -> Result<(), String> {
+    let mut guard = state.producer.lock().map_err(|e| e.to_string())?;
+    if let Some(producer) = guard.as_mut() {
+        let _ = producer.push(AudioCommand::SetSynthParams {
+            track_index,
+            params,
+        });
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn set_synth_morph(
+    track_index: usize,
+    x: f32,
+    y: f32,
+    state: tauri::State<'_, AudioState>,
+) -> Result<(), String> {
+    let mut guard = state.producer.lock().map_err(|e| e.to_string())?;
+    if let Some(producer) = guard.as_mut() {
+        let _ = producer.push(AudioCommand::SetSynthMorph {
+            track_index,
+            x: x.clamp(0.0, 1.0),
+            y: y.clamp(0.0, 1.0),
+        });
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_active_synth_voices(
+    track_index: usize,
+    state: tauri::State<'_, AudioState>,
+) -> Result<usize, String> {
+    if track_index < state.synth_voice_meters.len() {
+        let val = state.synth_voice_meters[track_index]
+            .load(std::sync::atomic::Ordering::Relaxed);
+        Ok(val as usize)
+    } else {
+        Ok(0)
+    }
+}
+
+#[tauri::command]
+fn trigger_synth_note(
+    track_index: usize,
+    note: u8,
+    velocity: f32,
+    state: tauri::State<'_, AudioState>,
+) -> Result<(), String> {
+    let mut guard = state.producer.lock().map_err(|e| e.to_string())?;
+    if let Some(producer) = guard.as_mut() {
+        let _ = producer.push(AudioCommand::SynthNoteOn {
+            track_index,
+            note,
+            velocity: velocity.clamp(0.0, 1.0),
+        });
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn release_synth_note(
+    track_index: usize,
+    note: u8,
+    state: tauri::State<'_, AudioState>,
+) -> Result<(), String> {
+    let mut guard = state.producer.lock().map_err(|e| e.to_string())?;
+    if let Some(producer) = guard.as_mut() {
+        let _ = producer.push(AudioCommand::SynthNoteOff { track_index, note });
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn synth_panic(
+    track_index: usize,
+    state: tauri::State<'_, AudioState>,
+) -> Result<(), String> {
+    let mut guard = state.producer.lock().map_err(|e| e.to_string())?;
+    if let Some(producer) = guard.as_mut() {
+        let _ = producer.push(AudioCommand::SynthAllNotesOff { track_index });
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -437,10 +533,16 @@ pub fn run() {
                 std::array::from_fn(|_| Arc::new(AtomicU32::new(0)));
             let spectrum_meters: [Arc<[AtomicU32; SPECTRUM_BINS]>; 9] =
                 std::array::from_fn(|_| Arc::new(std::array::from_fn(|_| AtomicU32::new(0))));
+            let synth_voice_meters: [Arc<AtomicU32>; 8] =
+                std::array::from_fn(|_| Arc::new(AtomicU32::new(0)));
 
             // Attempt eager startup of the CPAL audio stream
             let (initial_cmd_prod, initial_midi_prod, initial_stream) =
-                match AudioEngine::start(compressor_meters.clone(), spectrum_meters.clone()) {
+                match AudioEngine::start(
+                    compressor_meters.clone(),
+                    spectrum_meters.clone(),
+                    synth_voice_meters.clone(),
+                ) {
                     Ok((cmd_p, midi_p, stream)) => {
                         log::info!("AudioEngine started eagerly on setup");
                         (Some(cmd_p), Some(midi_p), Some(stream))
@@ -463,6 +565,7 @@ pub fn run() {
                 recorder: Mutex::new(AudioRecorder::new()),
                 compressor_meters,
                 spectrum_meters,
+                synth_voice_meters,
             });
 
             Ok(())
@@ -491,7 +594,13 @@ pub fn run() {
             set_compressor_params,
             get_compressor_reduction,
             set_equalizer_params,
-            get_spectrum_peaks
+            get_spectrum_peaks,
+            set_synth_params,
+            set_synth_morph,
+            get_active_synth_voices,
+            trigger_synth_note,
+            release_synth_note,
+            synth_panic
         ])
         .run(tauri::generate_context!())
         .expect("error while building tauri application");

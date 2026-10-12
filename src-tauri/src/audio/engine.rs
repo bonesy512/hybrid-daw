@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::audio::compressor::{Compressor, CompressorParams};
 use crate::audio::equalizer::{Equalizer, EqualizerParams, SPECTRUM_BINS};
 use crate::audio::sample_engine::{SampleData, SamplePlaybackVoice, VoicePool};
+use crate::audio::synth::{PolySynth, SynthParams};
 
 pub const MAX_CHANNELS: usize = 8;
 pub const STEP_COUNT: usize = 16;
@@ -64,6 +65,27 @@ pub enum AudioCommand {
         track_index: usize,
         params: EqualizerParams,
     },
+    SetSynthParams {
+        track_index: usize,
+        params: SynthParams,
+    },
+    SetSynthMorph {
+        track_index: usize,
+        x: f32,
+        y: f32,
+    },
+    SynthNoteOn {
+        track_index: usize,
+        note: u8,
+        velocity: f32,
+    },
+    SynthNoteOff {
+        track_index: usize,
+        note: u8,
+    },
+    SynthAllNotesOff {
+        track_index: usize,
+    },
 }
 
 impl std::fmt::Debug for AudioCommand {
@@ -97,6 +119,21 @@ impl std::fmt::Debug for AudioCommand {
             }
             AudioCommand::SetEqualizerParams { track_index, .. } => {
                 write!(f, "SetEqualizerParams(track: {})", track_index)
+            }
+            AudioCommand::SetSynthParams { track_index, .. } => {
+                write!(f, "SetSynthParams(track: {})", track_index)
+            }
+            AudioCommand::SetSynthMorph { track_index, x, y } => {
+                write!(f, "SetSynthMorph(track: {}, x: {}, y: {})", track_index, x, y)
+            }
+            AudioCommand::SynthNoteOn { track_index, note, velocity } => {
+                write!(f, "SynthNoteOn(track: {}, note: {}, vel: {})", track_index, note, velocity)
+            }
+            AudioCommand::SynthNoteOff { track_index, note } => {
+                write!(f, "SynthNoteOff(track: {}, note: {})", track_index, note)
+            }
+            AudioCommand::SynthAllNotesOff { track_index } => {
+                write!(f, "SynthAllNotesOff(track: {})", track_index)
             }
         }
     }
@@ -264,6 +301,7 @@ pub struct DspProcessor {
     master_equalizer: Equalizer,
     channel_compressors: [Compressor; MAX_CHANNELS],
     master_compressor: Compressor,
+    channel_synths: [PolySynth; MAX_CHANNELS],
     rng: XorShift32,
     cmd_consumer: Consumer<AudioCommand>,
     midi_consumer: Consumer<AudioCommand>,
@@ -278,6 +316,7 @@ impl DspProcessor {
         midi_consumer: Consumer<AudioCommand>,
         meter_atomics: &[Arc<AtomicU32>; MAX_CHANNELS + 1],
         spectrum_atomics: &[Arc<[AtomicU32; SPECTRUM_BINS]>; MAX_CHANNELS + 1],
+        synth_voice_atomics: &[Arc<AtomicU32>; MAX_CHANNELS],
     ) -> Self {
         let initial_bpm = 140.0;
         let samples_per_step = ((sample_rate as f64 * 60.0) / (initial_bpm * 4.0)).round() as usize;
@@ -322,6 +361,10 @@ impl DspProcessor {
         let master_compressor =
             Compressor::new_with_meter(sample_rate, Arc::clone(&meter_atomics[MAX_CHANNELS]));
 
+        let channel_synths = std::array::from_fn(|i| {
+            PolySynth::new_with_meter(sample_rate, Arc::clone(&synth_voice_atomics[i]))
+        });
+
         Self {
             sample_rate,
             bpm: initial_bpm,
@@ -337,6 +380,7 @@ impl DspProcessor {
             master_equalizer,
             channel_compressors,
             master_compressor,
+            channel_synths,
             rng: XorShift32::new(0xda3_1400),
             cmd_consumer,
             midi_consumer,
@@ -357,6 +401,9 @@ impl DspProcessor {
                 self.sample_counter = 0;
                 for voice in &mut self.voices {
                     voice.is_active = false;
+                }
+                for synth in &mut self.channel_synths {
+                    synth.all_notes_off();
                 }
                 self.sample_voices.stop_all();
                 self.preview_voice.stop();
@@ -432,8 +479,9 @@ impl DspProcessor {
                     other => (other as usize) % MAX_CHANNELS,
                 };
                 if velocity > 0 && voice_idx < MAX_CHANNELS {
+                    let vel = (velocity as f32 / 127.0).clamp(0.0, 1.0);
+                    self.channel_synths[voice_idx].note_on(note, vel);
                     if let Some(sample) = &self.channel_samples[voice_idx] {
-                        let vel = (velocity as f32 / 127.0).clamp(0.0, 1.0);
                         self.sample_voices.trigger_voice(
                             Arc::clone(&sample.frames),
                             sample.sample_rate,
@@ -448,7 +496,18 @@ impl DspProcessor {
                     }
                 }
             }
-            AudioCommand::MidiNoteOff { .. } => {}
+            AudioCommand::MidiNoteOff { channel: _, note } => {
+                let voice_idx = match note {
+                    35 | 36 => 0,
+                    38 | 40 => 3,
+                    39 => 1,
+                    42 | 44 | 46 => 2,
+                    other => (other as usize) % MAX_CHANNELS,
+                };
+                if voice_idx < MAX_CHANNELS {
+                    self.channel_synths[voice_idx].note_off(note);
+                }
+            }
             AudioCommand::PreviewSample(sample) => {
                 self.preview_voice.trigger(
                     Arc::clone(&sample.frames),
@@ -481,6 +540,31 @@ impl DspProcessor {
                     self.channel_equalizers[track_index].set_params(params);
                 } else if track_index == MAX_CHANNELS {
                     self.master_equalizer.set_params(params);
+                }
+            }
+            AudioCommand::SetSynthParams { track_index, params } => {
+                if track_index < MAX_CHANNELS {
+                    self.channel_synths[track_index].set_params(params);
+                }
+            }
+            AudioCommand::SetSynthMorph { track_index, x, y } => {
+                if track_index < MAX_CHANNELS {
+                    self.channel_synths[track_index].set_morph(x, y);
+                }
+            }
+            AudioCommand::SynthNoteOn { track_index, note, velocity } => {
+                if track_index < MAX_CHANNELS {
+                    self.channel_synths[track_index].note_on(note, velocity);
+                }
+            }
+            AudioCommand::SynthNoteOff { track_index, note } => {
+                if track_index < MAX_CHANNELS {
+                    self.channel_synths[track_index].note_off(note);
+                }
+            }
+            AudioCommand::SynthAllNotesOff { track_index } => {
+                if track_index < MAX_CHANNELS {
+                    self.channel_synths[track_index].all_notes_off();
                 }
             }
         }
@@ -521,7 +605,10 @@ impl DspProcessor {
                             );
                         } else {
                             voice.trigger();
+                            self.channel_synths[idx].note_on(60, 0.85);
                         }
+                    } else {
+                        self.channel_synths[idx].note_off(60);
                     }
                 }
             }
@@ -541,6 +628,10 @@ impl DspProcessor {
             let syn = self.voices[idx].process_sample(self.sample_rate, &mut self.rng);
             ch_mix_l[idx] += syn;
             ch_mix_r[idx] += syn;
+
+            let (synth_l, synth_r) = self.channel_synths[idx].process_frame();
+            ch_mix_l[idx] += synth_l;
+            ch_mix_r[idx] += synth_r;
         }
 
         self.sample_voices.process_channel_frames(&mut ch_mix_l, &mut ch_mix_r);
@@ -588,6 +679,7 @@ impl AudioEngine {
     pub fn start(
         meter_atomics: [Arc<AtomicU32>; MAX_CHANNELS + 1],
         spectrum_atomics: [Arc<[AtomicU32; SPECTRUM_BINS]>; MAX_CHANNELS + 1],
+        synth_voice_atomics: [Arc<AtomicU32>; MAX_CHANNELS],
     ) -> Result<
         (Producer<AudioCommand>, Producer<AudioCommand>, Stream),
         Box<dyn std::error::Error + Send + Sync>,
@@ -613,6 +705,7 @@ impl AudioEngine {
             midi_consumer,
             &meter_atomics,
             &spectrum_atomics,
+            &synth_voice_atomics,
         );
 
         let err_fn = |err| {

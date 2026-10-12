@@ -16,6 +16,7 @@ export interface Channel {
   sampleId?: string; // Loaded native sample ID
   samplePath?: string; // File system path to audio asset
   waveformPeaks?: number[]; // Waveform preview points
+  isSynth?: boolean; // Multi-Engine PolySynth mode
 }
 
 export interface PatternStoreState {
@@ -42,7 +43,8 @@ export interface PatternStoreActions {
     name?: string,
     peaks?: number[]
   ) => Promise<void>;
-  addChannel: (name?: string, sampleUrl?: string, color?: string) => void;
+  addChannel: (name?: string, sampleUrl?: string, color?: string, isSynth?: boolean) => void;
+  setChannelIsSynth: (channelId: string, isSynth: boolean) => void;
   removeChannel: (channelId: string) => void;
   clearPattern: () => void;
   setCurrentStep: (step: number) => void;
@@ -119,6 +121,20 @@ const DEFAULT_CHANNELS: Channel[] = [
     timeShift: 0,
     // step 12 active
     steps: createSteps(16, [12]),
+  },
+  {
+    id: "ch-alchemy-lead",
+    name: "Alchemy Synth",
+    sampleUrl: "synths/alchemy-lead",
+    color: "#a855f7", // Electric Violet
+    pan: 0,
+    volume: 0.82,
+    isMuted: false,
+    isSolo: false,
+    pitchOffset: 0,
+    timeShift: 0,
+    steps: createSteps(16, [0, 4, 8, 12]),
+    isSynth: true,
   },
 ];
 
@@ -242,7 +258,12 @@ export const usePatternStore = create<PatternStore>()((set) => ({
     }
   },
 
-  addChannel: (name = "New Instrument", sampleUrl = "synths/analog-sub", color = "#ff4400") =>
+  addChannel: (
+    name = "New Instrument",
+    sampleUrl = "synths/analog-sub",
+    color = "#ff4400",
+    isSynth = false
+  ) =>
     set((state) => {
       const id = `ch-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
       const newChannel: Channel = {
@@ -257,6 +278,7 @@ export const usePatternStore = create<PatternStore>()((set) => ({
         pitchOffset: 0,
         timeShift: 0,
         steps: new Array(state.stepCount).fill(false),
+        isSynth,
       };
       const nextChannels = [...state.channels, newChannel];
       syncPattern(
@@ -268,6 +290,13 @@ export const usePatternStore = create<PatternStore>()((set) => ({
       ).catch(() => {});
       return { channels: nextChannels };
     }),
+
+  setChannelIsSynth: (channelId: string, isSynth: boolean) =>
+    set((state) => ({
+      channels: state.channels.map((ch) =>
+        ch.id === channelId ? { ...ch, isSynth } : ch
+      ),
+    })),
 
   removeChannel: (channelId: string) =>
     set((state) => {

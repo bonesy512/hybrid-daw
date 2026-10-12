@@ -2,11 +2,13 @@
 
 import React, { useRef, useState } from "react";
 import {
+  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { type Channel, usePatternStore } from "@/stores/pattern-store";
+import { useSynthStore } from "@/stores/synth-store";
 
 interface RotaryKnobProps {
   label: string;
@@ -157,6 +159,8 @@ function ChannelSettingsModalContent({
   const setChannelVolume = usePatternStore((state) => state.setChannelVolume);
   const setChannelName = usePatternStore((state) => state.setChannelName);
   const removeChannel = usePatternStore((state) => state.removeChannel);
+  const setChannelIsSynth = usePatternStore((state) => state.setChannelIsSynth);
+  const channels = usePatternStore((state) => state.channels);
 
   const [nameInput, setNameInput] = useState(channel.name);
 
@@ -198,12 +202,38 @@ function ChannelSettingsModalContent({
           </button>
         </div>
 
-        {/* Preset / Sample Source Path */}
+        {/* Preset / Sample Source Path & Generator Mode */}
         <div className="mt-3 flex items-center justify-between rounded-xs border border-zinc-900 bg-black/50 px-2.5 py-1.5 font-mono text-[10px]">
-          <span className="text-zinc-500">SAMPLE SOURCE:</span>
-          <span className="text-telemetry-green font-bold truncate max-w-[200px]">
-            {channel.sampleUrl}
-          </span>
+          <span className="text-zinc-500">GENERATOR:</span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setChannelIsSynth(channel.id, !channel.isSynth)}
+              className={cn(
+                "rounded-xs border px-1.5 py-0.5 font-bold transition-all",
+                channel.isSynth
+                  ? "border-purple-500 bg-purple-950/40 text-purple-400 shadow-[0_0_6px_rgba(168,85,247,0.4)]"
+                  : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-zinc-200"
+              )}
+            >
+              {channel.isSynth ? "ALCHEMY SYNTH" : "SAMPLE / PCM"}
+            </button>
+            {channel.isSynth && (
+              <button
+                type="button"
+                onClick={() => {
+                  const trackIdx = channels.findIndex((c) => c.id === channel.id);
+                  useSynthStore.getState().openModal(trackIdx >= 0 ? trackIdx : 0, channel.id);
+                  onClose();
+                }}
+                className="flex items-center gap-1 rounded-xs border border-purple-500/80 bg-purple-900/40 px-2 py-0.5 text-purple-300 hover:bg-purple-800/50 transition-colors"
+                title="Launch Alchemy-Lite Synthesizer Modal"
+              >
+                <Sparkles className="size-3" />
+                <span>EDIT</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* 4-Knob Hardware Rack for Tuning & Mix */}

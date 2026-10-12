@@ -702,4 +702,345 @@ export async function getSpectrumPeaks(
   }
 }
 
+export type OscWaveform =
+  | "Sine"
+  | "Triangle"
+  | "Sawtooth"
+  | "Pulse"
+  | "WhiteNoise";
+
+export interface OscParams {
+  waveform: OscWaveform;
+  pulse_width: number; // 0.05 to 0.95
+  coarse_tune: number; // -24 to +24
+  fine_tune: number; // -100 to +100 cents
+  volume: number; // 0.0 to 1.0
+  pan: number; // -1.0 to 1.0
+  unison_voices: number; // 1 to 4
+  unison_detune: number; // 0.0 to 1.0
+  is_enabled: boolean;
+}
+
+export interface AhdsrParams {
+  attack_ms: number; // 0.5 to 10000 ms
+  hold_ms: number; // 0.0 to 5000 ms
+  decay_ms: number; // 1.0 to 10000 ms
+  sustain_level: number; // 0.0 to 1.0
+  release_ms: number; // 1.0 to 10000 ms
+}
+
+export type FilterMode =
+  | "Lowpass12"
+  | "Lowpass24"
+  | "Highpass12"
+  | "Highpass24"
+  | "Bandpass"
+  | "Notch";
+
+export interface FilterParams {
+  mode: FilterMode;
+  cutoff_hz: number; // 20.0 to 20000.0 Hz
+  resonance: number; // 0.0 to 0.98
+  drive: number; // 0.0 to 1.0
+  env2_amount: number; // -1.0 to 1.0
+  is_enabled: boolean;
+}
+
+export type LfoWaveform =
+  | "Sine"
+  | "Triangle"
+  | "Saw"
+  | "Square"
+  | "SampleAndHold";
+
+export interface LfoParams {
+  waveform: LfoWaveform;
+  rate_sync_div: number; // 1 to 32 (1/1 to 1/32)
+  cutoff_depth: number; // 0.0 to 1.0
+  pitch_depth: number; // 0.0 to 1.0
+  pwm_depth: number; // 0.0 to 1.0
+  is_enabled: boolean;
+}
+
+export interface SynthSnapshot {
+  name: string;
+  x: number;
+  y: number;
+  osc_a: OscParams;
+  osc_b: OscParams;
+  filter: FilterParams;
+  env1: AhdsrParams;
+  env2: AhdsrParams;
+}
+
+export interface SynthParams {
+  osc_a: OscParams;
+  osc_b: OscParams;
+  filter: FilterParams;
+  env1: AhdsrParams;
+  env2: AhdsrParams;
+  lfo: LfoParams;
+  morph_x: number;
+  morph_y: number;
+  snapshots: SynthSnapshot[];
+  master_volume: number;
+  glide_time_ms: number;
+}
+
+export const DEFAULT_OSC_A: OscParams = {
+  waveform: "Sawtooth",
+  pulse_width: 0.5,
+  coarse_tune: 0,
+  fine_tune: 0,
+  volume: 0.8,
+  pan: 0.0,
+  unison_voices: 1,
+  unison_detune: 0.15,
+  is_enabled: true,
+};
+
+export const DEFAULT_OSC_B: OscParams = {
+  waveform: "Pulse",
+  pulse_width: 0.35,
+  coarse_tune: 0,
+  fine_tune: 7,
+  volume: 0.6,
+  pan: 0.0,
+  unison_voices: 1,
+  unison_detune: 0.2,
+  is_enabled: true,
+};
+
+export const DEFAULT_FILTER: FilterParams = {
+  mode: "Lowpass24",
+  cutoff_hz: 3500,
+  resonance: 0.25,
+  drive: 0.15,
+  env2_amount: 0.4,
+  is_enabled: true,
+};
+
+export const DEFAULT_ENV1: AhdsrParams = {
+  attack_ms: 12,
+  hold_ms: 0,
+  decay_ms: 320,
+  sustain_level: 0.7,
+  release_ms: 350,
+};
+
+export const DEFAULT_ENV2: AhdsrParams = {
+  attack_ms: 5,
+  hold_ms: 0,
+  decay_ms: 450,
+  sustain_level: 0.15,
+  release_ms: 250,
+};
+
+export const DEFAULT_LFO: LfoParams = {
+  waveform: "Triangle",
+  rate_sync_div: 4, // 1/4 beat
+  cutoff_depth: 0.15,
+  pitch_depth: 0.0,
+  pwm_depth: 0.25,
+  is_enabled: true,
+};
+
+export const DEFAULT_SYNTH_SNAPSHOTS: SynthSnapshot[] = [
+  {
+    name: "Pure Saw",
+    x: 0.15,
+    y: 0.15,
+    osc_a: { ...DEFAULT_OSC_A, waveform: "Sawtooth" },
+    osc_b: { ...DEFAULT_OSC_B, is_enabled: false },
+    filter: { ...DEFAULT_FILTER, cutoff_hz: 12000, resonance: 0.1 },
+    env1: { ...DEFAULT_ENV1 },
+    env2: { ...DEFAULT_ENV2 },
+  },
+  {
+    name: "Acid Bite",
+    x: 0.5,
+    y: 0.1,
+    osc_a: { ...DEFAULT_OSC_A, waveform: "Sawtooth" },
+    osc_b: { ...DEFAULT_OSC_B, is_enabled: false },
+    filter: { ...DEFAULT_FILTER, cutoff_hz: 900, resonance: 0.85, drive: 0.6, env2_amount: 0.8 },
+    env1: { ...DEFAULT_ENV1, decay_ms: 180, sustain_level: 0.2 },
+    env2: { ...DEFAULT_ENV2, decay_ms: 140, sustain_level: 0.0 },
+  },
+  {
+    name: "Sub Rez",
+    x: 0.85,
+    y: 0.15,
+    osc_a: { ...DEFAULT_OSC_A, waveform: "Sine", volume: 1.0 },
+    osc_b: { ...DEFAULT_OSC_B, waveform: "Triangle", coarse_tune: -12, volume: 0.7 },
+    filter: { ...DEFAULT_FILTER, cutoff_hz: 450, resonance: 0.4 },
+    env1: { ...DEFAULT_ENV1, release_ms: 450 },
+    env2: { ...DEFAULT_ENV2 },
+  },
+  {
+    name: "Pulse PWM",
+    x: 0.9,
+    y: 0.5,
+    osc_a: { ...DEFAULT_OSC_A, waveform: "Pulse", pulse_width: 0.2 },
+    osc_b: { ...DEFAULT_OSC_B, waveform: "Pulse", pulse_width: 0.7, fine_tune: 12 },
+    filter: { ...DEFAULT_FILTER, cutoff_hz: 3200, resonance: 0.3 },
+    env1: { ...DEFAULT_ENV1 },
+    env2: { ...DEFAULT_ENV2 },
+  },
+  {
+    name: "Lush Pad",
+    x: 0.85,
+    y: 0.85,
+    osc_a: { ...DEFAULT_OSC_A, unison_voices: 4, unison_detune: 0.35 },
+    osc_b: { ...DEFAULT_OSC_B, unison_voices: 4, unison_detune: 0.4 },
+    filter: { ...DEFAULT_FILTER, cutoff_hz: 1800, resonance: 0.2 },
+    env1: { ...DEFAULT_ENV1, attack_ms: 450, sustain_level: 0.8, release_ms: 1200 },
+    env2: { ...DEFAULT_ENV2, attack_ms: 350 },
+  },
+  {
+    name: "Pluck Bell",
+    x: 0.5,
+    y: 0.9,
+    osc_a: { ...DEFAULT_OSC_A, waveform: "Sine" },
+    osc_b: { ...DEFAULT_OSC_B, waveform: "Triangle", coarse_tune: 19 },
+    filter: { ...DEFAULT_FILTER, cutoff_hz: 2400, resonance: 0.5, env2_amount: 0.9 },
+    env1: { ...DEFAULT_ENV1, attack_ms: 2, decay_ms: 180, sustain_level: 0.0, release_ms: 220 },
+    env2: { ...DEFAULT_ENV2, attack_ms: 1, decay_ms: 120, sustain_level: 0.0, release_ms: 120 },
+  },
+  {
+    name: "Glide Lead",
+    x: 0.15,
+    y: 0.85,
+    osc_a: { ...DEFAULT_OSC_A, waveform: "Sawtooth", unison_voices: 2, unison_detune: 0.18 },
+    osc_b: { ...DEFAULT_OSC_B, waveform: "Pulse", coarse_tune: 12 },
+    filter: { ...DEFAULT_FILTER, cutoff_hz: 6500, resonance: 0.35, drive: 0.3 },
+    env1: { ...DEFAULT_ENV1, attack_ms: 8, release_ms: 280 },
+    env2: { ...DEFAULT_ENV2 },
+  },
+  {
+    name: "Retro Noise",
+    x: 0.1,
+    y: 0.5,
+    osc_a: { ...DEFAULT_OSC_A, waveform: "Pulse", pulse_width: 0.15 },
+    osc_b: { ...DEFAULT_OSC_B, waveform: "WhiteNoise", volume: 0.3 },
+    filter: { ...DEFAULT_FILTER, cutoff_hz: 4000, resonance: 0.6 },
+    env1: { ...DEFAULT_ENV1, decay_ms: 240 },
+    env2: { ...DEFAULT_ENV2 },
+  },
+];
+
+export const DEFAULT_SYNTH_PARAMS: SynthParams = {
+  osc_a: { ...DEFAULT_OSC_A },
+  osc_b: { ...DEFAULT_OSC_B },
+  filter: { ...DEFAULT_FILTER },
+  env1: { ...DEFAULT_ENV1 },
+  env2: { ...DEFAULT_ENV2 },
+  lfo: { ...DEFAULT_LFO },
+  morph_x: 0.5,
+  morph_y: 0.5,
+  snapshots: DEFAULT_SYNTH_SNAPSHOTS,
+  master_volume: 0.8,
+  glide_time_ms: 0.0,
+};
+
+/**
+ * Updates real-time parameters for the Multi-Engine PolySynth on trackIndex.
+ */
+export async function setSynthParams(
+  trackIndex: number,
+  params: SynthParams
+): Promise<void> {
+  if (!isTauriEnvironment()) {
+    return;
+  }
+  try {
+    await invoke("set_synth_params", { trackIndex, params });
+  } catch (err) {
+    console.warn("[AudioBridge] invoke('set_synth_params') error:", err);
+  }
+}
+
+/**
+ * Sets the 2D XY morph pad position for trackIndex.
+ */
+export async function setSynthMorph(
+  trackIndex: number,
+  x: number,
+  y: number
+): Promise<void> {
+  if (!isTauriEnvironment()) {
+    return;
+  }
+  try {
+    await invoke("set_synth_morph", { trackIndex, x, y });
+  } catch (err) {
+    console.warn("[AudioBridge] invoke('set_synth_morph') error:", err);
+  }
+}
+
+/**
+ * Polls the current active polyphony voice count for trackIndex.
+ */
+export async function getActiveSynthVoices(
+  trackIndex: number
+): Promise<number> {
+  if (!isTauriEnvironment()) {
+    return 0;
+  }
+  try {
+    return await invoke<number>("get_active_synth_voices", { trackIndex });
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Manually triggers a note on the polyphonic synth.
+ */
+export async function triggerSynthNote(
+  trackIndex: number,
+  note: number,
+  velocity: number = 0.85
+): Promise<void> {
+  if (!isTauriEnvironment()) {
+    return;
+  }
+  try {
+    await invoke("trigger_synth_note", { trackIndex, note, velocity });
+  } catch (err) {
+    console.warn("[AudioBridge] invoke('trigger_synth_note') error:", err);
+  }
+}
+
+/**
+ * Manually releases a note on the polyphonic synth.
+ */
+export async function releaseSynthNote(
+  trackIndex: number,
+  note: number
+): Promise<void> {
+  if (!isTauriEnvironment()) {
+    return;
+  }
+  try {
+    await invoke("release_synth_note", { trackIndex, note });
+  } catch (err) {
+    console.warn("[AudioBridge] invoke('release_synth_note') error:", err);
+  }
+}
+
+/**
+ * Sends a panic command releasing all sounding notes on trackIndex.
+ */
+export async function synthPanic(trackIndex: number): Promise<void> {
+  if (!isTauriEnvironment()) {
+    return;
+  }
+  try {
+    await invoke("synth_panic", { trackIndex });
+  } catch (err) {
+    console.warn("[AudioBridge] invoke('synth_panic') error:", err);
+  }
+}
+
+
 

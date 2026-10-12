@@ -25,6 +25,7 @@ import {
   usePianoRollStore,
 } from "@/stores/pianoroll-store";
 import { usePatternStore } from "@/stores/pattern-store";
+import { useSynthStore } from "@/stores/synth-store";
 import { PianoRollCanvas } from "./PianoRollCanvas";
 import { VelocityLane } from "./VelocityLane";
 
@@ -243,6 +244,22 @@ export const PianoRoll: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* Synth Editor Trigger */}
+          {activeChannel?.isSynth && (
+            <button
+              type="button"
+              onClick={() => {
+                const trackIdx = channels.findIndex((c) => c.id === activeChannel.id);
+                useSynthStore.getState().openModal(trackIdx >= 0 ? trackIdx : 0, activeChannel.id);
+              }}
+              className="flex h-7 items-center gap-1.5 rounded-xs border border-purple-500/60 bg-purple-950/40 px-2 font-mono text-[10px] font-bold text-purple-400 hover:border-purple-400 hover:bg-purple-900/40 hover:text-purple-300 transition-all shadow-[0_0_8px_rgba(168,85,247,0.3)]"
+              title="Open Alchemy-Lite Synth Editor"
+            >
+              <Sparkles className="size-3 text-purple-400" />
+              <span>SYNTH</span>
+            </button>
+          )}
 
           <div className="h-5 w-px bg-zinc-800" />
 

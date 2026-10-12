@@ -8,6 +8,7 @@ import {
   Music2,
   Plus,
   Settings,
+  Sparkles,
   Usb,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -15,6 +16,7 @@ import { loadSample, syncPattern } from "@/lib/audio/tauri-bridge";
 import { useMidiStore } from "@/stores/midi-store";
 import { type Channel, usePatternStore } from "@/stores/pattern-store";
 import { usePianoRollStore } from "@/stores/pianoroll-store";
+import { useSynthStore } from "@/stores/synth-store";
 import { useTransportStore } from "@/stores/transport-store";
 import { ChannelSettingsModal } from "./ChannelSettingsModal";
 import { StepPad } from "./StepPad";
@@ -314,13 +316,16 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
   };
 
   const PRESET_INSTRUMENTS = [
-    { name: "Kick 909", url: "synths/kick-909", color: "#ff4400" },
-    { name: "Sub 808 Bass", url: "synths/sub-808", color: "#ff4400" },
-    { name: "Clap Tight", url: "samples/clap-tight", color: "#00f59b" },
-    { name: "Rimshot Metal", url: "samples/rim-metal", color: "#00f59b" },
-    { name: "Hi-Hat Open", url: "samples/hat-open", color: "#a1a1aa" },
-    { name: "Percussion Shaker", url: "samples/shaker", color: "#38bdf8" },
-    { name: "Acid 303 Saw", url: "synths/acid-303", color: "#fbbf24" },
+    { name: "Alchemy Lead", url: "synths/alchemy-lead", color: "#a855f7", isSynth: true },
+    { name: "Alchemy Bass", url: "synths/alchemy-bass", color: "#a855f7", isSynth: true },
+    { name: "Alchemy PolyPad", url: "synths/alchemy-pad", color: "#a855f7", isSynth: true },
+    { name: "Kick 909", url: "synths/kick-909", color: "#ff4400", isSynth: false },
+    { name: "Sub 808 Bass", url: "synths/sub-808", color: "#ff4400", isSynth: false },
+    { name: "Clap Tight", url: "samples/clap-tight", color: "#00f59b", isSynth: false },
+    { name: "Rimshot Metal", url: "samples/rim-metal", color: "#00f59b", isSynth: false },
+    { name: "Hi-Hat Open", url: "samples/hat-open", color: "#a1a1aa", isSynth: false },
+    { name: "Percussion Shaker", url: "samples/shaker", color: "#38bdf8", isSynth: false },
+    { name: "Acid 303 Saw", url: "synths/acid-303", color: "#fbbf24", isSynth: true },
   ];
 
   return (
@@ -527,12 +532,17 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
                     />
                   </div>
 
-                  {/* Tactile Channel Label Button (Click opens Piano Roll, Right-click opens Settings, Drop assigns Sample) */}
+                  {/* Tactile Channel Label Button (Click opens Piano Roll or Synth, Right-click opens Settings, Drop assigns Sample) */}
                   <button
                     type="button"
                     onClick={() => {
-                      usePianoRollStore.getState().setSelectedChannelId(channel.id);
-                      onOpenPianoRoll?.(channel.id);
+                      if (channel.isSynth) {
+                        const trackIdx = channels.findIndex((c) => c.id === channel.id);
+                        useSynthStore.getState().openModal(trackIdx >= 0 ? trackIdx : 0, channel.id);
+                      } else {
+                        usePianoRollStore.getState().setSelectedChannelId(channel.id);
+                        onOpenPianoRoll?.(channel.id);
+                      }
                     }}
                     onContextMenu={(e) => {
                       e.preventDefault();
@@ -546,7 +556,11 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
                       dragOverChannelId === channel.id &&
                         "border-telemetry-orange ring-1 ring-telemetry-orange shadow-[0_0_10px_rgba(255,68,0,0.6)] bg-zinc-900"
                     )}
-                    title="Click to open in Piano Roll, right-click for Settings, or drag sample from Browser to assign"
+                    title={
+                      channel.isSynth
+                        ? "Click to open Alchemy-Lite Synthesizer, right-click for Settings"
+                        : "Click to open in Piano Roll, right-click for Settings, or drag sample from Browser"
+                    }
                   >
                     {/* Channel Color Beacon */}
                     <div
@@ -559,11 +573,23 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
                         <span className="truncate font-mono text-xs font-bold text-zinc-200">
                           {channel.name}
                         </span>
-                        {channel.samplePath && (
+                        {channel.isSynth ? (
+                          <span
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const trackIdx = channels.findIndex((c) => c.id === channel.id);
+                              useSynthStore.getState().openModal(trackIdx >= 0 ? trackIdx : 0, channel.id);
+                            }}
+                            className="rounded-xs border border-purple-500/50 bg-purple-950/40 px-1 font-mono text-[7px] font-bold text-purple-400 tracking-tight hover:border-purple-400 hover:text-purple-300 cursor-pointer"
+                            title="Open Alchemy-Lite Synth Editor"
+                          >
+                            SYNTH
+                          </span>
+                        ) : channel.samplePath ? (
                           <span className="rounded-xs border border-telemetry-orange/50 bg-telemetry-orange/20 px-1 font-mono text-[7px] font-bold text-telemetry-orange tracking-tight">
                             SMPL
                           </span>
-                        )}
+                        ) : null}
                       </div>
                       {channel.pitchOffset !== 0 && (
                         <span className="font-mono text-[8px] text-telemetry-orange font-bold">
@@ -574,23 +600,48 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
                       )}
                     </div>
 
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleOpenSettings(channel);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
+                    <div className="ml-auto flex items-center gap-1">
+                      {channel.isSynth && (
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const trackIdx = channels.findIndex((c) => c.id === channel.id);
+                            useSynthStore.getState().openModal(trackIdx >= 0 ? trackIdx : 0, channel.id);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.stopPropagation();
+                              const trackIdx = channels.findIndex((c) => c.id === channel.id);
+                              useSynthStore.getState().openModal(trackIdx >= 0 ? trackIdx : 0, channel.id);
+                            }
+                          }}
+                          className="flex size-5 items-center justify-center rounded-[2px] text-purple-400 hover:text-purple-200 transition-colors cursor-pointer"
+                          title="Open Synth Editor"
+                        >
+                          <Sparkles className="size-3" />
+                        </div>
+                      )}
+
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
                           e.stopPropagation();
                           handleOpenSettings(channel);
-                        }
-                      }}
-                      className="ml-auto hidden size-5 items-center justify-center rounded-[2px] text-zinc-500 hover:text-zinc-200 group-hover/btn:flex transition-colors cursor-pointer"
-                      title="Channel Settings"
-                    >
-                      <Settings className="size-3" />
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.stopPropagation();
+                            handleOpenSettings(channel);
+                          }
+                        }}
+                        className="hidden size-5 items-center justify-center rounded-[2px] text-zinc-500 hover:text-zinc-200 group-hover/btn:flex transition-colors cursor-pointer"
+                        title="Channel Settings"
+                      >
+                        <Settings className="size-3" />
+                      </div>
                     </div>
                   </button>
                 </div>
@@ -635,7 +686,7 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
                   key={inst.name}
                   type="button"
                   onClick={() => {
-                    addChannel(inst.name, inst.url, inst.color);
+                    addChannel(inst.name, inst.url, inst.color, inst.isSynth);
                     setShowAddMenu(false);
                   }}
                   className="flex items-center gap-2 rounded-xs px-2 py-1.5 text-left font-mono text-xs text-zinc-200 hover:bg-zinc-800 transition-colors"
@@ -645,6 +696,11 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
                     style={{ backgroundColor: inst.color }}
                   />
                   <span>{inst.name}</span>
+                  {inst.isSynth && (
+                    <span className="ml-auto rounded-xs border border-purple-500/50 bg-purple-950/40 px-1 font-mono text-[7px] font-bold text-purple-400">
+                      SYNTH
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
