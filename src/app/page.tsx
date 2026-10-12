@@ -6,12 +6,14 @@ import {
   ChevronRight,
   Grid,
   Layers,
+  Music2,
   Plus,
   Sliders,
   SlidersHorizontal,
 } from "lucide-react";
 import { ChannelStrip } from "@/components/mixer/ChannelStrip";
 import { MixerDock } from "@/components/mixer/MixerDock";
+import { PianoRoll } from "@/components/pianoroll/PianoRoll";
 import { ChannelRack } from "@/components/sequencer/ChannelRack";
 import { TransportBar } from "@/components/transport/TransportBar";
 import { cn } from "@/lib/utils";
@@ -20,7 +22,7 @@ import { usePatternStore } from "@/stores/pattern-store";
 import { useTransportStore } from "@/stores/transport-store";
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<"rack" | "arranger" | "mixer">("rack");
+  const [activeTab, setActiveTab] = useState<"rack" | "pianoroll" | "arranger" | "mixer">("rack");
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
 
   const channels = usePatternStore((state) => state.channels);
@@ -58,6 +60,20 @@ export default function Home() {
               >
                 <Grid className="size-3.5" />
                 <span>CHANNEL RACK</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab("pianoroll")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-xs border px-3 py-1 font-mono text-xs font-semibold tracking-wider transition-colors uppercase",
+                  activeTab === "pianoroll"
+                    ? "border-telemetry-orange/70 bg-zinc-900 text-telemetry-orange shadow-[0_0_8px_rgba(255,68,0,0.25)]"
+                    : "border-transparent text-zinc-500 hover:border-zinc-800 hover:text-zinc-300"
+                )}
+              >
+                <Music2 className="size-3.5" />
+                <span>PIANO ROLL</span>
               </button>
 
               <button
@@ -114,7 +130,10 @@ export default function Home() {
           <div className="flex-1 overflow-hidden p-3">
             {activeTab === "rack" ? (
               /* ── DEDICATED CHANNEL RACK & STEP SEQUENCER ── */
-              <ChannelRack />
+              <ChannelRack onOpenPianoRoll={() => setActiveTab("pianoroll")} />
+            ) : activeTab === "pianoroll" ? (
+              /* ── HIGH-PERFORMANCE CANVAS PIANO ROLL ── */
+              <PianoRoll />
             ) : activeTab === "mixer" ? (
               /* ── FULL MULTI-TRACK MIXER CONSOLE ── */
               <MixerDock />

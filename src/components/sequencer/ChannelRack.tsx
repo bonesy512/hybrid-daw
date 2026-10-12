@@ -6,12 +6,18 @@ import {
   ChevronRight,
   ListRestart,
   Plus,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { type Channel, usePatternStore } from "@/stores/pattern-store";
+import { usePianoRollStore } from "@/stores/pianoroll-store";
 import { useTransportStore } from "@/stores/transport-store";
 import { ChannelSettingsModal } from "./ChannelSettingsModal";
 import { StepPad } from "./StepPad";
+
+export interface ChannelRackProps {
+  onOpenPianoRoll?: (channelId: string) => void;
+}
 
 interface MiniPotProps {
   label: "PAN" | "VOL";
@@ -109,7 +115,7 @@ function MiniPot({
   );
 }
 
-export function ChannelRack() {
+export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
   const channels = usePatternStore((state) => state.channels);
   const activePatternIndex = usePatternStore((state) => state.activePatternIndex);
   const currentStep = usePatternStore((state) => state.currentStep);
@@ -337,16 +343,19 @@ export function ChannelRack() {
                     />
                   </div>
 
-                  {/* Tactile Channel Label Button (Click / Right-click opens Settings) */}
+                  {/* Tactile Channel Label Button (Click opens Piano Roll, Right-click opens Settings) */}
                   <button
                     type="button"
-                    onClick={() => handleOpenSettings(channel)}
+                    onClick={() => {
+                      usePianoRollStore.getState().setSelectedChannelId(channel.id);
+                      onOpenPianoRoll?.(channel.id);
+                    }}
                     onContextMenu={(e) => {
                       e.preventDefault();
                       handleOpenSettings(channel);
                     }}
-                    className="relative flex h-8 flex-1 items-center gap-2 overflow-hidden rounded-[2px] border border-t-zinc-600/60 border-l-zinc-600/60 border-b-black border-r-black bg-gradient-to-r from-[#202028] to-[#16161c] px-2 text-left shadow-[0_1px_2px_rgba(0,0,0,0.8)] hover:from-[#282834] hover:to-[#1e1e26] active:translate-y-[1px] transition-all"
-                    title="Click or right-click to open Channel Settings"
+                    className="relative flex h-8 flex-1 items-center gap-2 overflow-hidden rounded-[2px] border border-t-zinc-600/60 border-l-zinc-600/60 border-b-black border-r-black bg-gradient-to-r from-[#202028] to-[#16161c] px-2 text-left shadow-[0_1px_2px_rgba(0,0,0,0.8)] hover:from-[#282834] hover:to-[#1e1e26] active:translate-y-[1px] transition-all group/btn"
+                    title="Click to open in Piano Roll, right-click for Settings"
                   >
                     {/* Channel Color Beacon */}
                     <div
@@ -365,6 +374,25 @@ export function ChannelRack() {
                             : `${channel.pitchOffset}st`}
                         </span>
                       )}
+                    </div>
+
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenSettings(channel);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.stopPropagation();
+                          handleOpenSettings(channel);
+                        }
+                      }}
+                      className="ml-auto hidden size-5 items-center justify-center rounded-[2px] text-zinc-500 hover:text-zinc-200 group-hover/btn:flex transition-colors cursor-pointer"
+                      title="Channel Settings"
+                    >
+                      <Settings className="size-3" />
                     </div>
                   </button>
                 </div>
