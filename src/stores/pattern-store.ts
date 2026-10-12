@@ -55,86 +55,58 @@ export interface PatternStoreActions {
 
 export type PatternStore = PatternStoreState & PatternStoreActions;
 
-const createSteps = (totalSteps: number, activeIndices: number[]): boolean[] => {
-  const steps = new Array(totalSteps).fill(false);
-  for (const idx of activeIndices) {
-    if (idx < totalSteps) {
-      steps[idx] = true;
-    }
-  }
-  return steps;
-};
-
 const DEFAULT_CHANNELS: Channel[] = [
   {
-    id: "ch-kick-808",
-    name: "Kick 808",
-    sampleUrl: "synths/kick-808",
+    id: "ch-sampler-1",
+    name: "Sampler 1",
+    sampleUrl: "samples/empty-1",
     color: "#ff4400", // Safety Orange
     pan: 0,
-    volume: 0.88,
+    volume: 0.85,
     isMuted: false,
     isSolo: false,
     pitchOffset: 0,
     timeShift: 0,
-    // steps 0, 8 active
-    steps: createSteps(16, [0, 8]),
+    steps: new Array(16).fill(false),
   },
   {
-    id: "ch-clap-tight",
-    name: "Clap Tight",
-    sampleUrl: "samples/clap-tight",
+    id: "ch-sampler-2",
+    name: "Sampler 2",
+    sampleUrl: "samples/empty-2",
     color: "#00f59b", // Phosphor Green
     pan: 0,
-    volume: 0.75,
+    volume: 0.85,
     isMuted: false,
     isSolo: false,
     pitchOffset: 0,
     timeShift: 0,
-    // steps 4, 12 active
-    steps: createSteps(16, [4, 12]),
+    steps: new Array(16).fill(false),
   },
   {
-    id: "ch-hat-closed",
-    name: "Hi-Hat Closed",
-    sampleUrl: "samples/hat-closed",
-    color: "#a1a1aa", // Stark Zinc
-    pan: 0.15,
-    volume: 0.65,
-    isMuted: false,
-    isSolo: false,
-    pitchOffset: 0,
-    timeShift: 0,
-    // steps 0, 2, 4, 6, 8, 10, 12, 14 active
-    steps: createSteps(16, [0, 2, 4, 6, 8, 10, 12, 14]),
-  },
-  {
-    id: "ch-snare-90s",
-    name: "Snare 90s",
-    sampleUrl: "samples/snare-90s",
+    id: "ch-sampler-3",
+    name: "Sampler 3",
+    sampleUrl: "samples/empty-3",
     color: "#38bdf8", // Sky Blue
     pan: 0,
-    volume: 0.8,
+    volume: 0.85,
     isMuted: false,
     isSolo: false,
     pitchOffset: 0,
     timeShift: 0,
-    // step 12 active
-    steps: createSteps(16, [12]),
+    steps: new Array(16).fill(false),
   },
   {
-    id: "ch-alchemy-lead",
-    name: "Alchemy Synth",
-    sampleUrl: "synths/alchemy-lead",
+    id: "ch-sampler-4",
+    name: "Sampler 4",
+    sampleUrl: "samples/empty-4",
     color: "#a855f7", // Electric Violet
     pan: 0,
-    volume: 0.82,
+    volume: 0.85,
     isMuted: false,
     isSolo: false,
     pitchOffset: 0,
     timeShift: 0,
-    steps: createSteps(16, [0, 4, 8, 12]),
-    isSynth: true,
+    steps: new Array(16).fill(false),
   },
 ];
 
@@ -245,6 +217,7 @@ export const usePatternStore = create<PatternStore>()((set) => ({
             name: name || ch.name,
             sampleId,
             samplePath,
+            isSynth: false,
             waveformPeaks: peaks || ch.waveformPeaks,
           };
         }

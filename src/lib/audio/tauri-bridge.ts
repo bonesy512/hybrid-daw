@@ -395,6 +395,37 @@ export async function assignChannelSample(
 }
 
 /**
+ * Opens a native OS file picker filtered to audio formats.
+ * Returns the selected absolute file path, or null if cancelled.
+ */
+export async function pickAudioFile(): Promise<string | null> {
+  if (!isTauriEnvironment()) {
+    return new Promise((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".wav,.mp3,.flac,.aif,.aiff,.ogg";
+      input.onchange = () => {
+        const file = input.files?.[0];
+        if (file) {
+          resolve(file.name);
+        } else {
+          resolve(null);
+        }
+      };
+      input.oncancel = () => resolve(null);
+      input.click();
+    });
+  }
+
+  try {
+    return await invoke<string | null>("pick_audio_file");
+  } catch (err) {
+    console.warn("[AudioBridge] invoke('pick_audio_file') error:", err);
+    return null;
+  }
+}
+
+/**
  * Lists contents of a directory with audio files and folders for the Sample Browser.
  */
 export async function listBrowserDirectory(

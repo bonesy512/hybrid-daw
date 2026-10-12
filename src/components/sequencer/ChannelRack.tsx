@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
+  FolderOpen,
   ListRestart,
   Music2,
   Plus,
@@ -12,7 +13,7 @@ import {
   Usb,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { loadSample, syncPattern } from "@/lib/audio/tauri-bridge";
+import { loadSample, pickAudioFile, syncPattern } from "@/lib/audio/tauri-bridge";
 import { useMidiStore } from "@/stores/midi-store";
 import { type Channel, usePatternStore } from "@/stores/pattern-store";
 import { usePianoRollStore } from "@/stores/pianoroll-store";
@@ -153,65 +154,120 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
   const handleChannelDragOver = (e: React.DragEvent, channelId: string) => {
     e.preventDefault();
     e.stopPropagation();
+    e.dataTransfer.dropEffect = "copy";
+    if (dragOverChannelId !== channelId) {
+      setDragOverChannelId(channelId);
+    }
+  };
+
+  const handleChannelDragEnter = (e: React.DragEvent, channelId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
     setDragOverChannelId(channelId);
   };
 
   const handleChannelDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
     setDragOverChannelId(null);
   };
 
   const handleChannelDrop = async (e: React.DragEvent, channel: Channel) => {
     e.preventDefault();
     e.stopPropagation();
+    setIsDraggingMidi(false);
     setDragOverChannelId(null);
 
-    // 1. Dragged from SampleBrowser
+    // 1. Dragged from internal SampleBrowser
     const sampleDataStr = e.dataTransfer.getData("application/hybrid-daw-sample");
     if (sampleDataStr) {
       try {
         const data = JSON.parse(sampleDataStr);
+        let meta = null;
+        if (data.filePath) {
+          try {
+            meta = await loadSample(data.filePath);
+          } catch {
+            // fallback
+          }
+        }
         await assignSampleToChannel(
           channel.id,
-          data.sampleId || data.filePath,
-          data.filePath,
-          data.name,
-          data.peaks
+          meta?.id || data.sampleId || data.filePath,
+          meta?.file_path || data.filePath,
+          meta?.name || data.name,
+          meta?.waveform_peaks || data.peaks
         );
         return;
-      } catch {
-        // fallback
+      } catch (err) {
+        console.warn("[ChannelRack] Error parsing internal sample data:", err);
       }
     }
 
-    // 2. Audio file dropped from desktop
-    const file = e.dataTransfer.files[0];
-    if (file && file.name.match(/\.(wav|aif|aiff|mp3|flac|ogg)$/i)) {
-      try {
-        const meta = await loadSample(file.name);
-        await assignSampleToChannel(
-          channel.id,
-          meta.id,
-          meta.file_path,
-          meta.name,
-          meta.waveform_peaks
-        );
-      } catch (err) {
-        console.warn("[ChannelRack] Sample drop load error:", err);
+    // 2. Audio file dropped from desktop / Windows Explorer
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      if (file.name.match(/\.(wav|aif|aiff|mp3|flac|ogg)$/i)) {
+        try {
+          // In Tauri, web File object dragged from Explorer has a `path` property
+          const filePath = (file as unknown as { path?: string }).path || file.name;
+          const meta = await loadSample(filePath);
+          await assignSampleToChannel(
+            channel.id,
+            meta.id,
+            meta.file_path,
+            meta.name,
+            meta.waveform_peaks
+          );
+        } catch (err) {
+          console.warn("[ChannelRack] Sample drop load error:", err);
+        }
       }
+    }
+  };
+
+  const handleLoadSampleDialog = async (channel: Channel) => {
+    try {
+      const selectedPath = await pickAudioFile();
+      if (!selectedPath) return;
+
+      const meta = await loadSample(selectedPath);
+      await assignSampleToChannel(
+        channel.id,
+        meta.id,
+        meta.file_path,
+        meta.name,
+        meta.waveform_peaks
+      );
+    } catch (err) {
+      console.warn("[ChannelRack] Direct sample load failed:", err);
     }
   };
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingMidi(true);
+    // Never trigger the full-rack MIDI overlay when dragging samples
+    if (e.dataTransfer.types.includes("application/hybrid-daw-sample")) {
+      e.dataTransfer.dropEffect = "copy";
+      setIsDraggingMidi(false);
+      return;
+    }
+
+    if (e.dataTransfer.types.includes("Files")) {
+      if (dragOverChannelId) {
+        setIsDraggingMidi(false);
+        return;
+      }
+      setIsDraggingMidi(true);
+    }
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
     setIsDraggingMidi(false);
   };
 
@@ -476,7 +532,16 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
             return (
               <div
                 key={channel.id}
-                className="group flex items-center rounded-sm border border-zinc-800/90 bg-[#0d0d12] p-1.5 shadow-[0_1px_3px_rgba(0,0,0,0.6)] hover:border-zinc-700 transition-all"
+                onDragOver={(e) => handleChannelDragOver(e, channel.id)}
+                onDragEnter={(e) => handleChannelDragEnter(e, channel.id)}
+                onDragLeave={handleChannelDragLeave}
+                onDrop={(e) => handleChannelDrop(e, channel)}
+                className={cn(
+                  "group flex items-center rounded-sm border p-1.5 shadow-[0_1px_3px_rgba(0,0,0,0.6)] transition-all",
+                  dragOverChannelId === channel.id
+                    ? "border-telemetry-orange ring-1 ring-telemetry-orange shadow-[0_0_12px_rgba(255,68,0,0.4)] bg-[#181412]"
+                    : "border-zinc-800/90 bg-[#0d0d12] hover:border-zinc-700"
+                )}
               >
                 {/* ── Left Module: Mute, Solo, Pots, Channel Button ── */}
                 <div className="flex w-64 shrink-0 items-center gap-2 pr-3 border-r border-zinc-800">
@@ -549,6 +614,7 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
                       handleOpenSettings(channel);
                     }}
                     onDragOver={(e) => handleChannelDragOver(e, channel.id)}
+                    onDragEnter={(e) => handleChannelDragEnter(e, channel.id)}
                     onDragLeave={handleChannelDragLeave}
                     onDrop={(e) => handleChannelDrop(e, channel)}
                     className={cn(
@@ -623,6 +689,26 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
                           <Sparkles className="size-3" />
                         </div>
                       )}
+
+                      {/* Direct File Picker / Load Sample Button */}
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleLoadSampleDialog(channel);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.stopPropagation();
+                            handleLoadSampleDialog(channel);
+                          }
+                        }}
+                        className="hidden size-5 items-center justify-center rounded-[2px] text-zinc-500 hover:text-telemetry-orange hover:bg-zinc-800 group-hover/btn:flex transition-colors cursor-pointer"
+                        title="Load Sample (📂)..."
+                      >
+                        <FolderOpen className="size-3" />
+                      </div>
 
                       <div
                         role="button"

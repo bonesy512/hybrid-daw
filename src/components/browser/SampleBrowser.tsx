@@ -22,6 +22,8 @@ import {
   previewSample,
   stopPreview,
 } from "@/lib/audio/tauri-bridge";
+import { usePatternStore } from "@/stores/pattern-store";
+import { usePianoRollStore } from "@/stores/pianoroll-store";
 
 export interface SampleBrowserProps {
   isCollapsed?: boolean;
@@ -39,6 +41,11 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [activeAuditionPath, setActiveAuditionPath] = useState<string | null>(null);
   const [selectedSampleMeta, setSelectedSampleMeta] = useState<SampleMetadata | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    entry: BrowserEntry;
+  } | null>(null);
   const [, startTransition] = useTransition();
 
   // Load directory items
@@ -105,7 +112,6 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
     });
   };
 
-  // Spacebar hotkey to toggle preview of active or selected sample
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
@@ -122,6 +128,35 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeAuditionPath]);
+
+  useEffect(() => {
+    const handleClick = () => setContextMenu(null);
+    window.addEventListener("click", handleClick);
+    return () => window.removeEventListener("click", handleClick);
+  }, []);
+
+  const loadIntoActiveChannel = async (entry: BrowserEntry) => {
+    const patternState = usePatternStore.getState();
+    const pianoRollState = usePianoRollStore.getState();
+    const targetChannel =
+      patternState.channels.find((c) => c.id === pianoRollState.selectedChannelId) ||
+      patternState.channels[0];
+
+    if (!targetChannel) return;
+
+    try {
+      const meta = await loadSample(entry.path);
+      await patternState.assignSampleToChannel(
+        targetChannel.id,
+        meta.id,
+        meta.file_path,
+        meta.name,
+        meta.waveform_peaks
+      );
+    } catch (err) {
+      console.warn("[SampleBrowser] Failed to load sample into active channel:", err);
+    }
+  };
 
   // Filtered files
   const filteredEntries = entries.filter((e) =>
@@ -290,13 +325,22 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
                   draggable
                   onDragStart={(e) => handleDragStart(e, entry)}
                   onClick={() => handleAudition(entry)}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    loadIntoActiveChannel(entry);
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setContextMenu({ x: e.clientX, y: e.clientY, entry });
+                  }}
                   className={cn(
                     "group flex h-8 items-center gap-2 rounded-xs px-2 cursor-grab active:cursor-grabbing select-none border transition-all",
                     isPlaying
                       ? "border-telemetry-green/60 bg-telemetry-green/10 text-zinc-100 shadow-[0_0_10px_rgba(0,245,155,0.15)]"
                       : "border-transparent text-zinc-400 hover:border-zinc-800 hover:bg-zinc-900/60 hover:text-zinc-200"
                   )}
-                  title={`${entry.name} (Click or Space to Audition, Drag into Channel Rack)`}
+                  title={`${entry.name} (Click to Audition, Double-Click to Load, Right-Click for options, Drag into Channel Rack)`}
                 >
                   {/* Play/Stop Icon Trigger */}
                   <div className="shrink-0">
@@ -374,6 +418,61 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
               DRAG TO CHANNEL RACK
             </span>
           </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (selectedSampleMeta) {
+                loadIntoActiveChannel({
+                  name: selectedSampleMeta.name,
+                  path: selectedSampleMeta.file_path,
+                  is_directory: false,
+                  extension: selectedSampleMeta.file_path.split(".").pop() || "wav",
+                  size_bytes: null,
+                });
+              }
+            }}
+            className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-xs border border-telemetry-orange/50 bg-telemetry-orange/15 py-1 font-mono text-[9px] font-bold text-telemetry-orange hover:bg-telemetry-orange/30 hover:border-telemetry-orange transition-all"
+            title="Load into Active Channel"
+          >
+            <FolderOpen className="size-3" />
+            <span>LOAD INTO ACTIVE CHANNEL</span>
+          </button>
+        </div>
+      )}
+
+      {/* ── Context Menu ── */}
+      {contextMenu && (
+        <div
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          className="fixed z-50 flex min-w-48 flex-col rounded-sm border border-zinc-700 bg-zinc-950/95 p-1 text-[11px] font-mono shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-2 py-1 text-[9px] text-zinc-500 border-b border-zinc-800 font-bold truncate">
+            {contextMenu.entry.name}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              loadIntoActiveChannel(contextMenu.entry);
+              setContextMenu(null);
+            }}
+            className="flex items-center gap-2 rounded-xs px-2 py-1.5 text-left text-zinc-200 hover:bg-telemetry-orange/20 hover:text-telemetry-orange transition-colors"
+          >
+            <FolderOpen className="size-3 text-telemetry-orange" />
+            <span>Load into Active Channel</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              handleAudition(contextMenu.entry);
+              setContextMenu(null);
+            }}
+            className="flex items-center gap-2 rounded-xs px-2 py-1.5 text-left text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
+          >
+            <Music className="size-3" />
+            <span>Audition Sample</span>
+          </button>
         </div>
       )}
     </aside>

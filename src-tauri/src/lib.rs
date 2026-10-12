@@ -211,6 +211,16 @@ fn assign_channel_sample(
 }
 
 #[tauri::command]
+fn pick_audio_file() -> Result<Option<String>, String> {
+    let file = rfd::FileDialog::new()
+        .add_filter("Audio Files", &["wav", "mp3", "flac", "aif", "aiff", "ogg"])
+        .set_title("Load Audio Sample")
+        .pick_file();
+
+    Ok(file.map(|f| f.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
 fn list_browser_directory(dir_path: Option<String>) -> Result<Vec<BrowserEntry>, String> {
     let target_dir: PathBuf = match dir_path {
         Some(ref p) if !p.trim().is_empty() => PathBuf::from(p),
@@ -585,6 +595,7 @@ pub fn run() {
             preview_sample,
             stop_preview,
             assign_channel_sample,
+            pick_audio_file,
             list_browser_directory,
             get_audio_input_devices,
             start_recording,

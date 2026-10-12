@@ -331,14 +331,6 @@ impl DspProcessor {
             vec.push(PercussionVoice::new(SoundType::Clap, [false; STEP_COUNT]));
             vec.push(PercussionVoice::new(SoundType::HiHat, [false; STEP_COUNT]));
             vec.push(PercussionVoice::new(SoundType::Snare, [false; STEP_COUNT]));
-            vec[0].steps[0] = true;
-            vec[0].steps[8] = true;
-            vec[1].steps[4] = true;
-            vec[1].steps[12] = true;
-            for i in (0..16).step_by(2) {
-                vec[2].steps[i] = true;
-            }
-            vec[3].steps[12] = true;
             vec.into_boxed_slice()
                 .try_into()
                 .unwrap_or_else(|_| panic!("voices size mismatch"))

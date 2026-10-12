@@ -103,95 +103,10 @@ export const SCALE_INTERVALS: Record<ScaleType, number[]> = {
   blues: [0, 3, 5, 6, 7, 10],
 };
 
-// Initial default MIDI notes (An energetic synth bass / hook progression in C Minor)
-const DEFAULT_NOTES: MidiNote[] = [
-  // Bar 1
-  {
-    id: "note-1",
-    channelId: "ch-kick-808",
-    pitch: 60, // C4
-    startTick: 0,
-    durationTicks: 48,
-    velocity: 0.92,
-    isSelected: false,
-  },
-  {
-    id: "note-2",
-    channelId: "ch-kick-808",
-    pitch: 63, // Eb4
-    startTick: 48,
-    durationTicks: 48,
-    velocity: 0.85,
-    isSelected: false,
-  },
-  {
-    id: "note-3",
-    channelId: "ch-kick-808",
-    pitch: 67, // G4
-    startTick: 96,
-    durationTicks: 96,
-    velocity: 0.95,
-    isSelected: false,
-  },
-  {
-    id: "note-4",
-    channelId: "ch-kick-808",
-    pitch: 70, // Bb4
-    startTick: 192,
-    durationTicks: 48,
-    velocity: 0.78,
-    isSelected: false,
-  },
-  {
-    id: "note-5",
-    channelId: "ch-kick-808",
-    pitch: 72, // C5
-    startTick: 240,
-    durationTicks: 96,
-    velocity: 0.9,
-    isSelected: false,
-  },
-  // Bar 2
-  {
-    id: "note-6",
-    channelId: "ch-kick-808",
-    pitch: 67, // G4
-    startTick: 384,
-    durationTicks: 48,
-    velocity: 0.82,
-    isSelected: false,
-  },
-  {
-    id: "note-7",
-    channelId: "ch-kick-808",
-    pitch: 65, // F4
-    startTick: 432,
-    durationTicks: 48,
-    velocity: 0.88,
-    isSelected: false,
-  },
-  {
-    id: "note-8",
-    channelId: "ch-kick-808",
-    pitch: 63, // Eb4
-    startTick: 480,
-    durationTicks: 96,
-    velocity: 0.86,
-    isSelected: false,
-  },
-  {
-    id: "note-9",
-    channelId: "ch-kick-808",
-    pitch: 60, // C4
-    startTick: 576,
-    durationTicks: 192,
-    velocity: 0.94,
-    isSelected: false,
-  },
-];
+const DEFAULT_NOTES: MidiNote[] = [];
 
 export const usePianoRollStore = create<PianoRollStore>()((set, get) => ({
-  selectedChannelId: "ch-kick-808",
+  selectedChannelId: "ch-sampler-1",
   ppq: PPQ,
   snapDivision: "1/16",
   tool: "draw",

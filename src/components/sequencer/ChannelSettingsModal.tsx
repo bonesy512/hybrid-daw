@@ -2,11 +2,13 @@
 
 import React, { useRef, useState } from "react";
 import {
+  FolderOpen,
   Sparkles,
   Trash2,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { loadSample, pickAudioFile } from "@/lib/audio/tauri-bridge";
 import { type Channel, usePatternStore } from "@/stores/pattern-store";
 import { useSynthStore } from "@/stores/synth-store";
 
@@ -318,6 +320,32 @@ function ChannelSettingsModalContent({
           >
             <Trash2 className="size-3" />
             <span>DELETE TRACK</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const selectedPath = await pickAudioFile();
+                if (!selectedPath) return;
+                const meta = await loadSample(selectedPath);
+                await usePatternStore.getState().assignSampleToChannel(
+                  channel.id,
+                  meta.id,
+                  meta.file_path,
+                  meta.name,
+                  meta.waveform_peaks
+                );
+                setNameInput(meta.name);
+              } catch (err) {
+                console.warn("[ChannelSettingsModal] Load sample failed:", err);
+              }
+            }}
+            className="flex items-center gap-1.5 rounded-xs border border-zinc-700 bg-zinc-900 px-2.5 py-1 font-mono text-[10px] text-zinc-300 hover:border-telemetry-orange hover:text-telemetry-orange transition-colors"
+            title="Choose sample from disk"
+          >
+            <FolderOpen className="size-3 text-telemetry-orange" />
+            <span>LOAD SAMPLE...</span>
           </button>
 
           <button
