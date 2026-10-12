@@ -1,0 +1,18 @@
+# Normalize all text to LF in the repo, regardless of OS/autocrlf settings.
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Binary assets
+*.png  binary
+*.jpg  binary
+*.ico  binary
+*.icns binary
+*.wav  binary
+*.flac binary
+*.mp3  binary
+*.woff binary
+*.woff2 binary
