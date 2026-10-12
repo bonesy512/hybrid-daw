@@ -11,10 +11,12 @@ import {
   Scissors,
   Sparkles,
   Trash2,
+  Usb,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useMidiStore } from "@/stores/midi-store";
 import {
   ChordStampType,
   ScaleType,
@@ -66,6 +68,7 @@ export const PianoRoll: React.FC = () => {
   const [showSnapDropdown, setShowSnapDropdown] = useState(false);
   const [showScaleDropdown, setShowScaleDropdown] = useState(false);
   const [showChordDropdown, setShowChordDropdown] = useState(false);
+  const [isDraggingMidi, setIsDraggingMidi] = useState(false);
 
   // Zoom handlers
   const handleZoomIn = () => {
@@ -80,8 +83,72 @@ export const PianoRoll: React.FC = () => {
     setViewRange({ endTick: viewRange.startTick + newSpan });
   };
 
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingMidi(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingMidi(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingMidi(false);
+
+    const file = e.dataTransfer.files[0];
+    if (!file || !file.name.match(/\.(mid|midi)$/i)) return;
+
+    const parsed = await useMidiStore.getState().parseMidiFile(file);
+    if (!parsed || parsed.tracks.length === 0) return;
+
+    const track = parsed.tracks.find((t) => t.notes.length > 0) || parsed.tracks[0];
+    if (!track) return;
+
+    const scaleFactor = 96 / (parsed.ppq || 96);
+    usePianoRollStore.setState((state) => {
+      const otherNotes = state.notes.filter((n) => n.channelId !== selectedChannelId);
+      const importedNotes = track.notes.map((n, idx) => ({
+        id: `imported-${Date.now()}-${idx}`,
+        channelId: selectedChannelId,
+        pitch: n.pitch,
+        startTick: Math.round(n.start_tick * scaleFactor),
+        durationTicks: Math.max(12, Math.round(n.duration_ticks * scaleFactor)),
+        velocity: n.velocity,
+        isSelected: false,
+      }));
+
+      return {
+        notes: [...otherNotes, ...importedNotes],
+      };
+    });
+  };
+
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden rounded-sm border border-[#27272a] bg-[#09090b] shadow-[0_4px_20px_rgba(0,0,0,0.8)]">
+    <div
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className="relative flex h-full w-full flex-col overflow-hidden rounded-sm border border-[#27272a] bg-[#09090b] shadow-[0_4px_20px_rgba(0,0,0,0.8)]"
+    >
+      {/* ── MIDI File Dropzone Overlay ── */}
+      {isDraggingMidi && (
+        <div className="pointer-events-none absolute inset-0 z-50 flex flex-col items-center justify-center border-2 border-dashed border-telemetry-green bg-zinc-950/90 backdrop-blur-md animate-in fade-in duration-100">
+          <div className="flex size-14 items-center justify-center rounded-sm border border-telemetry-green bg-zinc-900 text-telemetry-green shadow-[0_0_24px_rgba(0,245,155,0.4)] mb-3">
+            <Usb className="size-8" />
+          </div>
+          <span className="font-mono text-sm font-black text-telemetry-green uppercase tracking-widest">
+            DROP .MID FILE TO IMPORT INTO PIANO ROLL
+          </span>
+          <span className="font-mono text-xs text-zinc-400 mt-1">
+            Target Channel: {activeChannel?.name} // Auto-quantizing to 96 PPQ
+          </span>
+        </div>
+      )}
       {/* ── TOP INDUSTRIAL TOOLBAR ── */}
       <div className="flex h-11 items-center justify-between border-b border-[#27272a] bg-[#0d0d12] px-3 shrink-0 select-none">
         {/* Left: Channel Selector + Tool Switchers */}

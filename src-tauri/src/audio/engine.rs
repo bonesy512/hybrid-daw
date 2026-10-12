@@ -24,6 +24,19 @@ pub enum AudioCommand {
         channel_index: usize,
         steps: [bool; STEP_COUNT],
     },
+    TriggerVoice {
+        channel_index: usize,
+        velocity: f32,
+    },
+    MidiNoteOn {
+        channel: u8,
+        note: u8,
+        velocity: u8,
+    },
+    MidiNoteOff {
+        channel: u8,
+        note: u8,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,10 +196,15 @@ pub struct DspProcessor {
     voices: [PercussionVoice; MAX_CHANNELS],
     rng: XorShift32,
     cmd_consumer: Consumer<AudioCommand>,
+    midi_consumer: Consumer<AudioCommand>,
 }
 
 impl DspProcessor {
-    pub fn new(sample_rate: f32, cmd_consumer: Consumer<AudioCommand>) -> Self {
+    pub fn new(
+        sample_rate: f32,
+        cmd_consumer: Consumer<AudioCommand>,
+        midi_consumer: Consumer<AudioCommand>,
+    ) -> Self {
         let initial_bpm = 140.0;
         let samples_per_step = ((sample_rate as f64 * 60.0) / (initial_bpm * 4.0)).round() as usize;
 
@@ -228,47 +246,75 @@ impl DspProcessor {
             voices,
             rng: XorShift32::new(0xda3_1400),
             cmd_consumer,
+            midi_consumer,
         }
     }
 
-    /// Process incoming commands from the lock-free ringbuffer.
+    #[inline(always)]
+    fn handle_command(&mut self, cmd: AudioCommand) {
+        match cmd {
+            AudioCommand::Play => {
+                self.is_playing = true;
+            }
+            AudioCommand::Stop => {
+                self.is_playing = false;
+                self.current_step = 0;
+                self.sample_counter = 0;
+                for voice in &mut self.voices {
+                    voice.is_active = false;
+                }
+            }
+            AudioCommand::SetBpm(bpm) => {
+                let sanitized = bpm.clamp(20.0, 999.0);
+                self.bpm = sanitized;
+                self.samples_per_step =
+                    ((self.sample_rate as f64 * 60.0) / (sanitized * 4.0)).round() as usize;
+            }
+            AudioCommand::UpdatePattern {
+                channel_index,
+                steps,
+            } => {
+                if channel_index < MAX_CHANNELS {
+                    self.voices[channel_index].steps = steps;
+                }
+            }
+            AudioCommand::TriggerVoice { channel_index, velocity: _ } => {
+                if channel_index < MAX_CHANNELS {
+                    self.voices[channel_index].trigger();
+                }
+            }
+            AudioCommand::MidiNoteOn { channel: _, note, velocity } => {
+                // General MIDI percussion key mapping with fallback to channel indexing
+                let voice_idx = match note {
+                    35 | 36 => 0,       // Bass Drum 1 / Acoustic Bass Drum
+                    38 | 40 => 3,       // Acoustic Snare / Electric Snare
+                    39 => 1,            // Hand Clap
+                    42 | 44 | 46 => 2,  // Closed Hi-Hat / Pedal / Open
+                    other => (other as usize) % MAX_CHANNELS,
+                };
+                if velocity > 0 && voice_idx < MAX_CHANNELS {
+                    self.voices[voice_idx].trigger();
+                }
+            }
+            AudioCommand::MidiNoteOff { .. } => {}
+        }
+    }
+
+    /// Process incoming commands from the lock-free ringbuffers (UI thread and MIDI thread).
     #[inline(always)]
     fn drain_commands(&mut self) {
         while let Ok(cmd) = self.cmd_consumer.pop() {
-            match cmd {
-                AudioCommand::Play => {
-                    self.is_playing = true;
-                }
-                AudioCommand::Stop => {
-                    self.is_playing = false;
-                    self.current_step = 0;
-                    self.sample_counter = 0;
-                    for voice in &mut self.voices {
-                        voice.is_active = false;
-                    }
-                }
-                AudioCommand::SetBpm(bpm) => {
-                    let sanitized = bpm.clamp(20.0, 999.0);
-                    self.bpm = sanitized;
-                    self.samples_per_step =
-                        ((self.sample_rate as f64 * 60.0) / (sanitized * 4.0)).round() as usize;
-                }
-                AudioCommand::UpdatePattern {
-                    channel_index,
-                    steps,
-                } => {
-                    if channel_index < MAX_CHANNELS {
-                        self.voices[channel_index].steps = steps;
-                    }
-                }
-            }
+            self.handle_command(cmd);
+        }
+        while let Ok(cmd) = self.midi_consumer.pop() {
+            self.handle_command(cmd);
         }
     }
 
     /// Process a single audio frame (stereo L/R). Real-time safe: zero allocation, lock-free.
     #[inline(always)]
     pub fn process_frame(&mut self) -> (f32, f32) {
-        // Check for new commands from UI thread
+        // Check for new commands from UI thread and MIDI controller thread
         self.drain_commands();
 
         // Advance 16-step sequencer clock if playing
@@ -304,8 +350,11 @@ impl DspProcessor {
 pub struct AudioEngine;
 
 impl AudioEngine {
-    /// Initialize CPAL audio output stream with an rtrb lock-free command producer.
-    pub fn start() -> Result<(Producer<AudioCommand>, Stream), Box<dyn std::error::Error + Send + Sync>> {
+    /// Initialize CPAL audio output stream with dual lock-free command ringbuffers (UI and MIDI).
+    pub fn start() -> Result<
+        (Producer<AudioCommand>, Producer<AudioCommand>, Stream),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
         let host = cpal::default_host();
         let device = host
             .default_output_device()
@@ -318,9 +367,10 @@ impl AudioEngine {
 
         let stream_config: StreamConfig = default_config.into();
 
-        // 256-command lock-free ringbuffer
-        let (producer, consumer) = RingBuffer::<AudioCommand>::new(256);
-        let mut dsp = DspProcessor::new(sample_rate, consumer);
+        // 256-command lock-free ringbuffer for UI commands, 512 for MIDI hardware events
+        let (cmd_producer, cmd_consumer) = RingBuffer::<AudioCommand>::new(256);
+        let (midi_producer, midi_consumer) = RingBuffer::<AudioCommand>::new(512);
+        let mut dsp = DspProcessor::new(sample_rate, cmd_consumer, midi_consumer);
 
         let err_fn = |err| {
             log::error!("CPAL audio stream error: {:?}", err);
@@ -392,6 +442,6 @@ impl AudioEngine {
         };
 
         stream.play()?;
-        Ok((producer, stream))
+        Ok((cmd_producer, midi_producer, stream))
     }
 }

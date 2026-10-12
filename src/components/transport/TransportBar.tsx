@@ -9,9 +9,12 @@ import {
   Radio,
   Repeat,
   Square,
+  Usb,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useMidiStore } from "@/stores/midi-store";
 import { useTransportStore } from "@/stores/transport-store";
+import { MidiSettingsModal } from "@/components/midi/MidiSettingsModal";
 import { BpmLedDisplay, PositionLedDisplay } from "./LedDisplay";
 
 interface TransportButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -181,6 +184,20 @@ export function TransportBar() {
   const stop = useTransportStore((state) => state.stop);
   const setPosition = useTransportStore((state) => state.setPosition);
 
+  const setMidiModalOpen = useMidiStore((state) => state.setModalOpen);
+  const connectedDeviceName = useMidiStore((state) => state.connectedDeviceName);
+  const lastActivityTimestamp = useMidiStore((state) => state.lastActivityTimestamp);
+
+  const [isMidiFlashing, setIsMidiFlashing] = React.useState(false);
+
+  useEffect(() => {
+    if (lastActivityTimestamp > 0) {
+      setIsMidiFlashing(true);
+      const timer = setTimeout(() => setIsMidiFlashing(false), 120);
+      return () => clearTimeout(timer);
+    }
+  }, [lastActivityTimestamp]);
+
   // Simulation loop for clock when playing in standalone UI preview mode
   useEffect(() => {
     if (!isPlaying) return;
@@ -300,8 +317,42 @@ export function TransportBar() {
           <MasterMeterCanvas isPlaying={isPlaying} />
         </div>
 
-        {/* Minimalist Telemetry: CPU & Buffer */}
-        <div className="flex items-center gap-3">
+        {/* Minimalist Telemetry: MIDI Pill, CPU & Buffer */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* MIDI Controller Status Pill */}
+          <button
+            type="button"
+            onClick={() => setMidiModalOpen(true)}
+            className={cn(
+              "flex items-center gap-1.5 rounded-sm border px-2 py-1 font-mono text-[9px] font-bold uppercase transition-all shadow-sm",
+              connectedDeviceName
+                ? isMidiFlashing
+                  ? "border-telemetry-green bg-telemetry-green/30 text-telemetry-green shadow-[0_0_10px_#00f59b]"
+                  : "border-zinc-700 bg-[#050507] text-telemetry-green hover:border-zinc-500"
+                : isMidiFlashing
+                  ? "border-telemetry-orange bg-telemetry-orange/30 text-telemetry-orange shadow-[0_0_10px_#ff4400]"
+                  : "border-zinc-800 bg-[#050507] text-zinc-500 hover:border-zinc-700 hover:text-zinc-300"
+            )}
+            title={
+              connectedDeviceName
+                ? `Active MIDI Device: ${connectedDeviceName} (Click to open settings)`
+                : "Configure MIDI Hardware Controller"
+            }
+          >
+            <Usb className="size-2.5 text-current" />
+            <span className="hidden sm:inline">MIDI</span>
+            <span
+              className={cn(
+                "size-1.5 rounded-full transition-all",
+                isMidiFlashing
+                  ? "bg-telemetry-green shadow-[0_0_6px_#00f59b]"
+                  : connectedDeviceName
+                    ? "bg-telemetry-green"
+                    : "bg-zinc-600"
+              )}
+            />
+          </button>
+
           {/* CPU Meter */}
           <div
             className="flex flex-col rounded-sm border border-zinc-800 bg-[#050507] px-2.5 py-1"
@@ -355,6 +406,9 @@ export function TransportBar() {
           </div>
         </div>
       </div>
+
+      {/* Hardware MIDI Settings Modal */}
+      <MidiSettingsModal />
     </header>
   );
 }
