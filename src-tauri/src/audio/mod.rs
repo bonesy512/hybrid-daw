@@ -1,10 +1,12 @@
 pub mod compressor;
 pub mod engine;
+pub mod equalizer;
 pub mod midi;
 pub mod recorder;
 pub mod sample_engine;
 
 pub use compressor::{Compressor, CompressorCircuit, CompressorParams};
+pub use equalizer::{EqBandParams, Equalizer, EqualizerParams, FilterType, SPECTRUM_BINS};
 pub use engine::{AudioCommand, AudioEngine, ChannelSyncData};
 pub use midi::{
     MidiDeviceDescriptor, MidiManager, ParsedMidiFile, ParsedMidiNote, ParsedMidiTrack,

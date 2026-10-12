@@ -40,11 +40,19 @@ export interface ActiveCompressorModalState {
   insertId: string | null;
 }
 
+export interface ActiveChannelEqModalState {
+  isOpen: boolean;
+  trackId: string | null;
+  trackIndex: number;
+  insertId: string | null;
+}
+
 export interface MixerStoreState {
   tracks: MixerTrack[];
   selectedTrackId: string;
   masterVolume: number;
   compressorModal: ActiveCompressorModalState;
+  channelEqModal: ActiveChannelEqModalState;
 }
 
 export interface MixerStoreActions {
@@ -64,6 +72,8 @@ export interface MixerStoreActions {
   setMasterVolume: (dB: number) => void;
   openCompressorModal: (trackId: string, trackIndex: number, insertId: string) => void;
   closeCompressorModal: () => void;
+  openChannelEqModal: (trackId: string, trackIndex: number, insertId?: string) => void;
+  closeChannelEqModal: () => void;
   updateInsertParams: (
     trackId: string,
     insertId: string,
@@ -79,7 +89,21 @@ const DEFAULT_EFFECT_PRESETS: Record<
 > = {
   eq: {
     name: "Channel EQ 8-Band",
-    params: { lowCut: 30, lowGain: 0, midGain: 0, highGain: 0, highCut: 18000 },
+    params: {
+      is_enabled: true,
+      output_gain_db: 0,
+      spectrum_post_eq: true,
+      bands: JSON.stringify([
+        { filter_type: "Highpass", is_active: false, frequency_hz: 30, gain_db: 0, q: 0.7071, slope_order: 1 },
+        { filter_type: "LowShelf", is_active: true, frequency_hz: 100, gain_db: 0, q: 0.7071, slope_order: 1 },
+        { filter_type: "Peaking", is_active: true, frequency_hz: 250, gain_db: 0, q: 1.0, slope_order: 1 },
+        { filter_type: "Peaking", is_active: true, frequency_hz: 1000, gain_db: 0, q: 1.0, slope_order: 1 },
+        { filter_type: "Peaking", is_active: true, frequency_hz: 3000, gain_db: 0, q: 1.0, slope_order: 1 },
+        { filter_type: "Peaking", is_active: true, frequency_hz: 8000, gain_db: 0, q: 1.0, slope_order: 1 },
+        { filter_type: "HighShelf", is_active: true, frequency_hz: 12000, gain_db: 0, q: 0.7071, slope_order: 1 },
+        { filter_type: "Lowpass", is_active: false, frequency_hz: 18000, gain_db: 0, q: 0.7071, slope_order: 1 },
+      ]),
+    },
   },
   compressor: {
     name: "Vintage VCA Comp",
@@ -283,6 +307,12 @@ export const useMixerStore = create<MixerStore>()((set) => ({
     trackIndex: 0,
     insertId: null,
   },
+  channelEqModal: {
+    isOpen: false,
+    trackId: null,
+    trackIndex: 0,
+    insertId: null,
+  },
 
   setTrackVolume: (trackId: string, dB: number) =>
     set((state) => ({
@@ -447,6 +477,58 @@ export const useMixerStore = create<MixerStore>()((set) => ({
     set((state) => ({
       compressorModal: {
         ...state.compressorModal,
+        isOpen: false,
+      },
+    })),
+
+  openChannelEqModal: (trackId: string, trackIndex: number, insertId?: string) =>
+    set((state) => {
+      let targetInsertId = insertId;
+      let nextTracks = state.tracks;
+
+      if (!targetInsertId) {
+        const tr = state.tracks.find((t) => t.id === trackId);
+        const existingEq = tr?.inserts.find((ins) => ins.type === "eq");
+        if (existingEq) {
+          targetInsertId = existingEq.id;
+        } else {
+          const newEqId = `ins-${trackId}-eq-${Date.now()}`;
+          targetInsertId = newEqId;
+          nextTracks = state.tracks.map((t) =>
+            t.id === trackId
+              ? {
+                  ...t,
+                  inserts: [
+                    ...t.inserts,
+                    {
+                      id: newEqId,
+                      name: "Channel EQ 8-Band",
+                      type: "eq" as EffectType,
+                      isActive: true,
+                      params: DEFAULT_EFFECT_PRESETS.eq.params,
+                    },
+                  ],
+                }
+              : t
+          );
+        }
+      }
+
+      return {
+        tracks: nextTracks,
+        channelEqModal: {
+          isOpen: true,
+          trackId,
+          trackIndex,
+          insertId: targetInsertId,
+        },
+      };
+    }),
+
+  closeChannelEqModal: () =>
+    set((state) => ({
+      channelEqModal: {
+        ...state.channelEqModal,
         isOpen: false,
       },
     })),

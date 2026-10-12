@@ -156,6 +156,7 @@ export function ChannelStrip({ track, isMaster = false }: ChannelStripProps) {
   const toggleSendPreFader = useMixerStore((state) => state.toggleSendPreFader);
   const tracks = useMixerStore((state) => state.tracks);
   const openCompressorModal = useMixerStore((state) => state.openCompressorModal);
+  const openChannelEqModal = useMixerStore((state) => state.openChannelEqModal);
 
   const trackIndex =
     isMaster || track.id === "track-master"
@@ -279,6 +280,32 @@ export function ChannelStrip({ track, isMaster = false }: ChannelStripProps) {
         </div>
       </div>
 
+      {/* ── CHANNEL EQ DISPLAY THUMBNAIL ── */}
+      <div
+        onClick={(e) => {
+          e.stopPropagation();
+          const eqIns = track.inserts.find((ins) => ins.type === "eq");
+          openChannelEqModal(track.id, trackIndex, eqIns?.id);
+        }}
+        className="mt-1.5 flex h-6 cursor-pointer items-center justify-between rounded-xs border border-zinc-900 bg-[#060609] px-1.5 hover:border-cyan-500/70 transition-colors group"
+        title="Open 8-Band Channel EQ"
+      >
+        <span className="font-mono text-[7px] font-black text-cyan-400 group-hover:text-cyan-300">
+          EQ
+        </span>
+        <svg className="h-3 w-16 overflow-visible opacity-70 group-hover:opacity-100" viewBox="0 0 80 16">
+          <path
+            d="M 0,8 Q 14,8 22,4 T 42,8 T 62,12 T 80,8"
+            fill="none"
+            stroke="#22d3ee"
+            strokeWidth="1.2"
+          />
+        </svg>
+        <span className="font-mono text-[6px] font-bold text-zinc-500">
+          8-BAND
+        </span>
+      </div>
+
       {/* ── INSERTS SECTION (UP TO 8 SLOTS) ── */}
       <div className="mt-1.5 flex flex-col gap-0.5 rounded-xs border border-zinc-900 bg-[#060609] p-1">
         <div className="flex items-center justify-between px-1">
@@ -309,11 +336,14 @@ export function ChannelStrip({ track, isMaster = false }: ChannelStripProps) {
                 e.stopPropagation();
                 if (ins.type === "compressor") {
                   openCompressorModal(track.id, trackIndex, ins.id);
+                } else if (ins.type === "eq") {
+                  openChannelEqModal(track.id, trackIndex, ins.id);
                 }
               }}
               className={cn(
                 "group flex h-5 items-center justify-between rounded-[1px] border px-1 font-mono text-[8px] transition-colors",
                 ins.type === "compressor" && "cursor-pointer hover:border-telemetry-orange/70",
+                ins.type === "eq" && "cursor-pointer hover:border-cyan-500/70",
                 ins.isActive
                   ? "border-zinc-700/80 bg-zinc-900/90 text-zinc-200"
                   : "border-zinc-900 bg-zinc-950 text-zinc-600 line-through"
@@ -321,6 +351,8 @@ export function ChannelStrip({ track, isMaster = false }: ChannelStripProps) {
               title={
                 ins.type === "compressor"
                   ? `Open Modeled Compressor (${ins.name})`
+                  : ins.type === "eq"
+                  ? `Open 8-Band Channel EQ (${ins.name})`
                   : ins.name
               }
             >
@@ -342,7 +374,8 @@ export function ChannelStrip({ track, isMaster = false }: ChannelStripProps) {
 
               <span className={cn(
                 "truncate flex-1 text-left font-semibold",
-                ins.type === "compressor" && "group-hover:text-telemetry-orange transition-colors"
+                ins.type === "compressor" && "group-hover:text-telemetry-orange transition-colors",
+                ins.type === "eq" && "group-hover:text-cyan-400 transition-colors"
               )}>
                 {ins.name}
               </span>

@@ -18,6 +18,7 @@ import { SampleBrowser } from "@/components/browser/SampleBrowser";
 import { ChannelRack } from "@/components/sequencer/ChannelRack";
 import { ArrangerTimeline } from "@/components/arranger/ArrangerTimeline";
 import { CompressorModal } from "@/components/dsp/CompressorModal";
+import { ChannelEqModal } from "@/components/dsp/ChannelEqModal";
 import { TransportBar } from "@/components/transport/TransportBar";
 import { cn } from "@/lib/utils";
 import { useMixerStore } from "@/stores/mixer-store";
@@ -208,6 +209,9 @@ export default function Home() {
 
       {/* ── MODELED COMPRESSOR HARDWARE MODAL ── */}
       <CompressorModal />
+
+      {/* ── 8-BAND SURGICAL CHANNEL EQ MODAL ── */}
+      <ChannelEqModal />
     </div>
   );
 }

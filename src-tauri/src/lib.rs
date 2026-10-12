@@ -11,8 +11,9 @@ use tauri::Manager;
 
 use crate::audio::{
     decode_audio_file, ensure_factory_samples, AudioCommand, AudioDeviceDescriptor, AudioEngine,
-    AudioRecorder, BrowserEntry, ChannelSyncData, CompressorParams, MidiDeviceDescriptor,
-    MidiManager, ParsedMidiFile, RecordedClipMetadata, SampleData, SampleMetadata,
+    AudioRecorder, BrowserEntry, ChannelSyncData, CompressorParams, EqualizerParams,
+    MidiDeviceDescriptor, MidiManager, ParsedMidiFile, RecordedClipMetadata, SampleData,
+    SampleMetadata, SPECTRUM_BINS,
 };
 
 pub struct AudioState {
@@ -23,6 +24,7 @@ pub struct AudioState {
     pub sample_cache: Mutex<HashMap<String, Arc<SampleData>>>,
     pub recorder: Mutex<AudioRecorder>,
     pub compressor_meters: [Arc<AtomicU32>; 9],
+    pub spectrum_meters: [Arc<[AtomicU32; SPECTRUM_BINS]>; 9],
 }
 
 // In CPAL on Windows, Stream contains !Send raw COM handles, but holding it
@@ -39,7 +41,7 @@ fn start_audio(state: tauri::State<'_, AudioState>) -> Result<String, String> {
         return Ok("Audio engine already active".into());
     }
 
-    match AudioEngine::start(state.compressor_meters.clone()) {
+    match AudioEngine::start(state.compressor_meters.clone(), state.spectrum_meters.clone()) {
         Ok((cmd_prod, midi_prod, stream)) => {
             *prod_guard = Some(cmd_prod);
             *stream_guard = Some(stream);
@@ -382,6 +384,40 @@ fn get_compressor_reduction(
     }
 }
 
+#[tauri::command]
+fn set_equalizer_params(
+    track_index: usize,
+    params: EqualizerParams,
+    state: tauri::State<'_, AudioState>,
+) -> Result<(), String> {
+    let mut guard = state.producer.lock().map_err(|e| e.to_string())?;
+    if let Some(producer) = guard.as_mut() {
+        let _ = producer.push(AudioCommand::SetEqualizerParams {
+            track_index,
+            params,
+        });
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_spectrum_peaks(
+    track_index: usize,
+    state: tauri::State<'_, AudioState>,
+) -> Result<Vec<f32>, String> {
+    if track_index < state.spectrum_meters.len() {
+        let peaks = &state.spectrum_meters[track_index];
+        let mut result = Vec::with_capacity(SPECTRUM_BINS);
+        for atomic in peaks.iter() {
+            let bits = atomic.load(std::sync::atomic::Ordering::Relaxed);
+            result.push(f32::from_bits(bits));
+        }
+        Ok(result)
+    } else {
+        Ok(vec![0.0; SPECTRUM_BINS])
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -399,10 +435,12 @@ pub fn run() {
 
             let compressor_meters: [Arc<AtomicU32>; 9] =
                 std::array::from_fn(|_| Arc::new(AtomicU32::new(0)));
+            let spectrum_meters: [Arc<[AtomicU32; SPECTRUM_BINS]>; 9] =
+                std::array::from_fn(|_| Arc::new(std::array::from_fn(|_| AtomicU32::new(0))));
 
             // Attempt eager startup of the CPAL audio stream
             let (initial_cmd_prod, initial_midi_prod, initial_stream) =
-                match AudioEngine::start(compressor_meters.clone()) {
+                match AudioEngine::start(compressor_meters.clone(), spectrum_meters.clone()) {
                     Ok((cmd_p, midi_p, stream)) => {
                         log::info!("AudioEngine started eagerly on setup");
                         (Some(cmd_p), Some(midi_p), Some(stream))
@@ -424,6 +462,7 @@ pub fn run() {
                 sample_cache: Mutex::new(HashMap::new()),
                 recorder: Mutex::new(AudioRecorder::new()),
                 compressor_meters,
+                spectrum_meters,
             });
 
             Ok(())
@@ -450,7 +489,9 @@ pub fn run() {
             get_recording_peak_level,
             set_recording_monitoring,
             set_compressor_params,
-            get_compressor_reduction
+            get_compressor_reduction,
+            set_equalizer_params,
+            get_spectrum_peaks
         ])
         .run(tauri::generate_context!())
         .expect("error while building tauri application");

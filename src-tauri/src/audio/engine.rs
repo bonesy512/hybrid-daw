@@ -7,6 +7,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use serde::{Deserialize, Serialize};
 
 use crate::audio::compressor::{Compressor, CompressorParams};
+use crate::audio::equalizer::{Equalizer, EqualizerParams, SPECTRUM_BINS};
 use crate::audio::sample_engine::{SampleData, SamplePlaybackVoice, VoicePool};
 
 pub const MAX_CHANNELS: usize = 8;
@@ -59,6 +60,10 @@ pub enum AudioCommand {
         track_index: usize,
         params: CompressorParams,
     },
+    SetEqualizerParams {
+        track_index: usize,
+        params: EqualizerParams,
+    },
 }
 
 impl std::fmt::Debug for AudioCommand {
@@ -89,6 +94,9 @@ impl std::fmt::Debug for AudioCommand {
             AudioCommand::SetMonitorGain(g) => write!(f, "SetMonitorGain({})", g),
             AudioCommand::SetCompressorParams { track_index, .. } => {
                 write!(f, "SetCompressorParams(track: {})", track_index)
+            }
+            AudioCommand::SetEqualizerParams { track_index, .. } => {
+                write!(f, "SetEqualizerParams(track: {})", track_index)
             }
         }
     }
@@ -252,6 +260,8 @@ pub struct DspProcessor {
     channel_samples: [Option<Arc<SampleData>>; MAX_CHANNELS],
     sample_voices: VoicePool,
     preview_voice: SamplePlaybackVoice,
+    channel_equalizers: [Equalizer; MAX_CHANNELS],
+    master_equalizer: Equalizer,
     channel_compressors: [Compressor; MAX_CHANNELS],
     master_compressor: Compressor,
     rng: XorShift32,
@@ -267,6 +277,7 @@ impl DspProcessor {
         cmd_consumer: Consumer<AudioCommand>,
         midi_consumer: Consumer<AudioCommand>,
         meter_atomics: &[Arc<AtomicU32>; MAX_CHANNELS + 1],
+        spectrum_atomics: &[Arc<[AtomicU32; SPECTRUM_BINS]>; MAX_CHANNELS + 1],
     ) -> Self {
         let initial_bpm = 140.0;
         let samples_per_step = ((sample_rate as f64 * 60.0) / (initial_bpm * 4.0)).round() as usize;
@@ -299,6 +310,12 @@ impl DspProcessor {
         // Snare (12)
         voices[3].steps[12] = true;
 
+        let channel_equalizers = std::array::from_fn(|i| {
+            Equalizer::new_with_spectrum(sample_rate, Arc::clone(&spectrum_atomics[i]))
+        });
+        let master_equalizer =
+            Equalizer::new_with_spectrum(sample_rate, Arc::clone(&spectrum_atomics[MAX_CHANNELS]));
+
         let channel_compressors = std::array::from_fn(|i| {
             Compressor::new_with_meter(sample_rate, Arc::clone(&meter_atomics[i]))
         });
@@ -316,6 +333,8 @@ impl DspProcessor {
             channel_samples: std::array::from_fn(|_| None),
             sample_voices: VoicePool::new(),
             preview_voice: SamplePlaybackVoice::new(),
+            channel_equalizers,
+            master_equalizer,
             channel_compressors,
             master_compressor,
             rng: XorShift32::new(0xda3_1400),
@@ -457,6 +476,13 @@ impl DspProcessor {
                     self.master_compressor.set_params(params);
                 }
             }
+            AudioCommand::SetEqualizerParams { track_index, params } => {
+                if track_index < MAX_CHANNELS {
+                    self.channel_equalizers[track_index].set_params(params);
+                } else if track_index == MAX_CHANNELS {
+                    self.master_equalizer.set_params(params);
+                }
+            }
         }
     }
 
@@ -519,12 +545,13 @@ impl DspProcessor {
 
         self.sample_voices.process_channel_frames(&mut ch_mix_l, &mut ch_mix_r);
 
-        // Process each channel through its modeled stereo compressor and sum
+        // Process each channel through 8-band EQ then stereo compressor and sum
         let mut mix_left = 0.0;
         let mut mix_right = 0.0;
 
         for idx in 0..MAX_CHANNELS {
-            let (c_l, c_r) = self.channel_compressors[idx].process_frame(ch_mix_l[idx], ch_mix_r[idx]);
+            let (eq_l, eq_r) = self.channel_equalizers[idx].process_frame(ch_mix_l[idx], ch_mix_r[idx]);
+            let (c_l, c_r) = self.channel_compressors[idx].process_frame(eq_l, eq_r);
             mix_left += c_l;
             mix_right += c_r;
         }
@@ -543,8 +570,9 @@ impl DspProcessor {
             }
         }
 
-        // Process full stereo mix through modeled master bus compressor
-        let (master_l, master_r) = self.master_compressor.process_frame(mix_left, mix_right);
+        // Process full stereo mix through modeled master bus 8-band EQ then compressor
+        let (m_eq_l, m_eq_r) = self.master_equalizer.process_frame(mix_left, mix_right);
+        let (master_l, master_r) = self.master_compressor.process_frame(m_eq_l, m_eq_r);
 
         // Master soft clipping
         let clamped_l = (master_l * 0.8).clamp(-1.0, 1.0);
@@ -559,6 +587,7 @@ impl AudioEngine {
     /// Initialize CPAL audio output stream with dual lock-free command ringbuffers (UI and MIDI).
     pub fn start(
         meter_atomics: [Arc<AtomicU32>; MAX_CHANNELS + 1],
+        spectrum_atomics: [Arc<[AtomicU32; SPECTRUM_BINS]>; MAX_CHANNELS + 1],
     ) -> Result<
         (Producer<AudioCommand>, Producer<AudioCommand>, Stream),
         Box<dyn std::error::Error + Send + Sync>,
@@ -578,7 +607,13 @@ impl AudioEngine {
         // 256-command lock-free ringbuffer for UI commands, 512 for MIDI hardware events
         let (cmd_producer, cmd_consumer) = RingBuffer::<AudioCommand>::new(256);
         let (midi_producer, midi_consumer) = RingBuffer::<AudioCommand>::new(512);
-        let mut dsp = DspProcessor::new(sample_rate, cmd_consumer, midi_consumer, &meter_atomics);
+        let mut dsp = DspProcessor::new(
+            sample_rate,
+            cmd_consumer,
+            midi_consumer,
+            &meter_atomics,
+            &spectrum_atomics,
+        );
 
         let err_fn = |err| {
             log::error!("CPAL audio stream error: {:?}", err);

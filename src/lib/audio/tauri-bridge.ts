@@ -648,3 +648,58 @@ export async function getCompressorReduction(
   }
 }
 
+export type FilterType = "Highpass" | "LowShelf" | "Peaking" | "HighShelf" | "Lowpass";
+
+export interface EqBandParams {
+  filter_type: FilterType;
+  is_active: boolean;
+  frequency_hz: number;
+  gain_db: number;
+  q: number;
+  slope_order: number;
+}
+
+export interface EqualizerParams {
+  bands: EqBandParams[];
+  output_gain_db: number;
+  is_enabled: boolean;
+  spectrum_post_eq: boolean;
+}
+
+/**
+ * Updates real-time parameters for the 8-band parametric EQ on trackIndex (0..7 channel, 8 master).
+ */
+export async function setEqualizerParams(
+  trackIndex: number,
+  params: EqualizerParams
+): Promise<void> {
+  if (!isTauriEnvironment()) {
+    return;
+  }
+  try {
+    await invoke("set_equalizer_params", { trackIndex, params });
+  } catch (err) {
+    console.warn("[AudioBridge] invoke('set_equalizer_params') error:", err);
+  }
+}
+
+/**
+ * Polls the current 128 normalized FFT spectrum peaks from the Rust audio thread.
+ */
+export async function getSpectrumPeaks(
+  trackIndex: number
+): Promise<number[]> {
+  if (!isTauriEnvironment()) {
+    return Array.from({ length: 128 }, (_, i) => {
+      const freqFactor = Math.sin((i / 128) * Math.PI);
+      return Math.max(0, freqFactor * 0.4 + Math.random() * 0.15);
+    });
+  }
+  try {
+    return await invoke<number[]>("get_spectrum_peaks", { trackIndex });
+  } catch {
+    return new Array(128).fill(0);
+  }
+}
+
+
