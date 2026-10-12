@@ -16,6 +16,7 @@ import { MixerDock } from "@/components/mixer/MixerDock";
 import { PianoRoll } from "@/components/pianoroll/PianoRoll";
 import { SampleBrowser } from "@/components/browser/SampleBrowser";
 import { ChannelRack } from "@/components/sequencer/ChannelRack";
+import { ArrangerTimeline } from "@/components/arranger/ArrangerTimeline";
 import { TransportBar } from "@/components/transport/TransportBar";
 import { cn } from "@/lib/utils";
 import { useMixerStore } from "@/stores/mixer-store";
@@ -146,59 +147,11 @@ export default function Home() {
               /* ── FULL MULTI-TRACK MIXER CONSOLE ── */
               <MixerDock />
             ) : (
-              /* ── ARRANGER TIMELINE VIEW ── */
-              <div className="flex h-full flex-col overflow-y-auto rounded-sm border border-zinc-800 bg-[#0c0c10] p-3">
-                {/* Timeline Bar Ruler */}
-                <div className="flex h-8 items-center border-b border-zinc-800 bg-[#07070a] px-3 font-mono text-xs text-zinc-400">
-                  <div className="w-56 text-[9px] text-zinc-500 uppercase">
-                    TRACK LANES // ARRANGEMENT
-                  </div>
-                  <div className="flex flex-1 justify-between font-mono text-[10px]">
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((bar) => (
-                      <span key={bar} className="border-l border-zinc-800 pl-1 text-zinc-400">
-                        BAR {bar}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Track Lanes connected to PatternStore & MixerStore */}
-                <div className="flex flex-col divide-y divide-zinc-800/60">
-                  {channels.map((ch, idx) => (
-                    <div
-                      key={ch.id}
-                      onClick={() => selectTrack(tracks[idx % tracks.length]?.id || "track-1")}
-                      className="flex h-16 items-center px-2 cursor-pointer transition-colors hover:bg-zinc-900/30"
-                    >
-                      <div className="flex w-56 shrink-0 flex-col justify-center pr-3">
-                        <span className="font-mono text-xs font-bold text-zinc-200 truncate">
-                          {ch.name}
-                        </span>
-                        <span className="font-mono text-[9px] text-zinc-500">
-                          INSERT {idx + 1} {"//"} STEREO
-                        </span>
-                      </div>
-                      <div className="relative flex flex-1 h-12 items-center rounded-xs border border-zinc-800/80 bg-[#060609] px-2 overflow-hidden">
-                        {/* Audio / Pattern Block Sample */}
-                        <div
-                          className="flex h-10 w-2/3 items-center rounded-[2px] border px-3"
-                          style={{
-                            borderColor: `${ch.color}66`,
-                            backgroundColor: `${ch.color}15`,
-                          }}
-                        >
-                          <span
-                            className="font-mono text-[10px] font-bold uppercase tracking-wider"
-                            style={{ color: ch.color }}
-                          >
-                            PATTERN_01 {"//"} [01:01 - 04:04]
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              /* ── HYBRID FREE-FORM ARRANGER TIMELINE ── */
+              <ArrangerTimeline
+                onOpenPianoRoll={() => setActiveTab("pianoroll")}
+                onOpenChannelRack={() => setActiveTab("rack")}
+              />
             )}
           </div>
         </main>
