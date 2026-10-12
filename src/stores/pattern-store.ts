@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { syncPattern } from "@/lib/audio/tauri-bridge";
 
 export interface Channel {
   id: string;
@@ -119,8 +120,8 @@ export const usePatternStore = create<PatternStore>()((set) => ({
   channels: DEFAULT_CHANNELS,
 
   toggleStep: (channelId: string, stepIndex: number) =>
-    set((state) => ({
-      channels: state.channels.map((ch) => {
+    set((state) => {
+      const nextChannels = state.channels.map((ch) => {
         if (ch.id !== channelId) return ch;
         const newSteps = [...ch.steps];
         while (newSteps.length <= stepIndex) {
@@ -128,8 +129,21 @@ export const usePatternStore = create<PatternStore>()((set) => ({
         }
         newSteps[stepIndex] = !newSteps[stepIndex];
         return { ...ch, steps: newSteps };
-      }),
-    })),
+      });
+
+      // Automatically sync pattern updates to backend audio engine
+      syncPattern(
+        nextChannels.map((c) => ({
+          id: c.id,
+          name: c.name,
+          steps: c.steps,
+        }))
+      ).catch(() => {});
+
+      return {
+        channels: nextChannels,
+      };
+    }),
 
   setChannelPan: (channelId: string, pan: number) =>
     set((state) => ({
@@ -204,21 +218,45 @@ export const usePatternStore = create<PatternStore>()((set) => ({
         timeShift: 0,
         steps: new Array(state.stepCount).fill(false),
       };
-      return { channels: [...state.channels, newChannel] };
+      const nextChannels = [...state.channels, newChannel];
+      syncPattern(
+        nextChannels.map((c) => ({
+          id: c.id,
+          name: c.name,
+          steps: c.steps,
+        }))
+      ).catch(() => {});
+      return { channels: nextChannels };
     }),
 
   removeChannel: (channelId: string) =>
-    set((state) => ({
-      channels: state.channels.filter((ch) => ch.id !== channelId),
-    })),
+    set((state) => {
+      const nextChannels = state.channels.filter((ch) => ch.id !== channelId);
+      syncPattern(
+        nextChannels.map((c) => ({
+          id: c.id,
+          name: c.name,
+          steps: c.steps,
+        }))
+      ).catch(() => {});
+      return { channels: nextChannels };
+    }),
 
   clearPattern: () =>
-    set((state) => ({
-      channels: state.channels.map((ch) => ({
+    set((state) => {
+      const nextChannels = state.channels.map((ch) => ({
         ...ch,
         steps: new Array(state.stepCount).fill(false),
-      })),
-    })),
+      }));
+      syncPattern(
+        nextChannels.map((c) => ({
+          id: c.id,
+          name: c.name,
+          steps: c.steps,
+        }))
+      ).catch(() => {});
+      return { channels: nextChannels };
+    }),
 
   setCurrentStep: (currentStep: number) =>
     set(() => ({
@@ -236,9 +274,8 @@ export const usePatternStore = create<PatternStore>()((set) => ({
     })),
 
   setStepCount: (stepCount: 16 | 32) =>
-    set((state) => ({
-      stepCount,
-      channels: state.channels.map((ch) => {
+    set((state) => {
+      const nextChannels = state.channels.map((ch) => {
         const nextSteps = [...ch.steps];
         if (nextSteps.length < stepCount) {
           while (nextSteps.length < stepCount) {
@@ -248,6 +285,28 @@ export const usePatternStore = create<PatternStore>()((set) => ({
           nextSteps.length = stepCount;
         }
         return { ...ch, steps: nextSteps };
-      }),
-    })),
+      });
+      syncPattern(
+        nextChannels.map((c) => ({
+          id: c.id,
+          name: c.name,
+          steps: c.steps,
+        }))
+      ).catch(() => {});
+      return {
+        stepCount,
+        channels: nextChannels,
+      };
+    }),
 }));
+
+// Eagerly sync default pattern upon initialization
+if (typeof window !== "undefined") {
+  syncPattern(
+    DEFAULT_CHANNELS.map((c) => ({
+      id: c.id,
+      name: c.name,
+      steps: c.steps,
+    }))
+  ).catch(() => {});
+}

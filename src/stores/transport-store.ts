@@ -1,4 +1,10 @@
 import { create } from "zustand";
+import {
+  playTransport,
+  stopTransport,
+  setTempo,
+  startAudio,
+} from "@/lib/audio/tauri-bridge";
 
 export interface Position {
   bars: number;
@@ -54,21 +60,36 @@ export const useTransportStore = create<TransportStore>()((set) => ({
   bufferSize: 256,
 
   togglePlay: () =>
-    set((state) => ({
-      isPlaying: !state.isPlaying,
-    })),
+    set((state) => {
+      const nextPlaying = !state.isPlaying;
+      if (nextPlaying) {
+        startAudio().catch(() => {});
+        playTransport().catch(() => {});
+      } else {
+        stopTransport().catch(() => {});
+      }
+      return {
+        isPlaying: nextPlaying,
+      };
+    }),
 
-  play: () =>
+  play: () => {
+    startAudio().catch(() => {});
+    playTransport().catch(() => {});
     set(() => ({
       isPlaying: true,
-    })),
+    }));
+  },
 
-  pause: () =>
+  pause: () => {
+    stopTransport().catch(() => {});
     set(() => ({
       isPlaying: false,
-    })),
+    }));
+  },
 
-  stop: () =>
+  stop: () => {
+    stopTransport().catch(() => {});
     set((state) => {
       // If already stopped, pressing stop resets transport position to beginning
       if (!state.isPlaying && !state.isRecording) {
@@ -80,7 +101,8 @@ export const useTransportStore = create<TransportStore>()((set) => ({
         isPlaying: false,
         isRecording: false,
       };
-    }),
+    });
+  },
 
   toggleRecord: () =>
     set((state) => ({
@@ -92,13 +114,14 @@ export const useTransportStore = create<TransportStore>()((set) => ({
       isLooping: !state.isLooping,
     })),
 
-  setBpm: (bpm: number) =>
-    set(() => {
-      const sanitized = Math.min(999.0, Math.max(20.0, Number(bpm.toFixed(1))));
-      return {
-        bpm: Number.isNaN(sanitized) ? 140.0 : sanitized,
-      };
-    }),
+  setBpm: (bpm: number) => {
+    const sanitized = Math.min(999.0, Math.max(20.0, Number(bpm.toFixed(1))));
+    const finalBpm = Number.isNaN(sanitized) ? 140.0 : sanitized;
+    setTempo(finalBpm).catch(() => {});
+    set(() => ({
+      bpm: finalBpm,
+    }));
+  },
 
   setPosition: (pos: Partial<Position>) =>
     set((state) => ({
