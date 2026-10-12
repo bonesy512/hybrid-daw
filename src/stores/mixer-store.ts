@@ -7,7 +7,7 @@ export interface InsertEffect {
   name: string;
   type: EffectType;
   isActive: boolean;
-  params: Record<string, number>;
+  params: Record<string, number | string | boolean>;
 }
 
 export interface TrackSend {
@@ -33,10 +33,18 @@ export interface MixerTrack {
   peakR: number;
 }
 
+export interface ActiveCompressorModalState {
+  isOpen: boolean;
+  trackId: string | null;
+  trackIndex: number;
+  insertId: string | null;
+}
+
 export interface MixerStoreState {
   tracks: MixerTrack[];
   selectedTrackId: string;
   masterVolume: number;
+  compressorModal: ActiveCompressorModalState;
 }
 
 export interface MixerStoreActions {
@@ -54,18 +62,39 @@ export interface MixerStoreActions {
   toggleSendPreFader: (trackId: string, targetTrackId: string) => void;
   selectTrack: (trackId: string) => void;
   setMasterVolume: (dB: number) => void;
+  openCompressorModal: (trackId: string, trackIndex: number, insertId: string) => void;
+  closeCompressorModal: () => void;
+  updateInsertParams: (
+    trackId: string,
+    insertId: string,
+    params: Record<string, number | string | boolean>
+  ) => void;
 }
 
 export type MixerStore = MixerStoreState & MixerStoreActions;
 
-const DEFAULT_EFFECT_PRESETS: Record<EffectType, { name: string; params: Record<string, number> }> = {
+const DEFAULT_EFFECT_PRESETS: Record<
+  EffectType,
+  { name: string; params: Record<string, number | string | boolean> }
+> = {
   eq: {
     name: "Channel EQ 8-Band",
     params: { lowCut: 30, lowGain: 0, midGain: 0, highGain: 0, highCut: 18000 },
   },
   compressor: {
     name: "Vintage VCA Comp",
-    params: { threshold: -18, ratio: 4, attack: 15, release: 120, makeup: 2 },
+    params: {
+      circuit: "VintageVca",
+      threshold_db: -18,
+      ratio: 4,
+      attack_ms: 15,
+      release_ms: 150,
+      knee: 0.5,
+      makeup_gain_db: 0,
+      sidechain_lowcut_hz: 80,
+      is_enabled: true,
+      listen_sidechain: false,
+    },
   },
   delay: {
     name: "Stereo Tape Delay",
@@ -153,10 +182,21 @@ const DEFAULT_TRACKS: MixerTrack[] = [
     inserts: [
       {
         id: "ins-3-1",
-        name: "Tube Opto Comp",
+        name: "Vintage Opto Comp",
         type: "compressor",
         isActive: true,
-        params: { threshold: -14, ratio: 3, attack: 10, release: 200, makeup: 3 },
+        params: {
+          circuit: "VintageOpto",
+          threshold_db: -14,
+          ratio: 3,
+          attack_ms: 10,
+          release_ms: 200,
+          knee: 0.7,
+          makeup_gain_db: 3,
+          sidechain_lowcut_hz: 100,
+          is_enabled: true,
+          listen_sidechain: false,
+        },
       },
       {
         id: "ins-3-2",
@@ -210,10 +250,21 @@ const DEFAULT_TRACKS: MixerTrack[] = [
     inserts: [
       {
         id: "ins-m-1",
-        name: "Master True-Peak Limiter",
+        name: "Platinum Master Comp",
         type: "compressor",
         isActive: true,
-        params: { ceiling: -0.2, threshold: -1.0, release: 100 },
+        params: {
+          circuit: "Platinum",
+          threshold_db: -2.0,
+          ratio: 10,
+          attack_ms: 1.0,
+          release_ms: 100,
+          knee: 0.2,
+          makeup_gain_db: 0,
+          sidechain_lowcut_hz: 30,
+          is_enabled: true,
+          listen_sidechain: false,
+        },
       },
     ],
     sends: [],
@@ -226,6 +277,12 @@ export const useMixerStore = create<MixerStore>()((set) => ({
   tracks: DEFAULT_TRACKS,
   selectedTrackId: "track-1",
   masterVolume: 0.0,
+  compressorModal: {
+    isOpen: false,
+    trackId: null,
+    trackIndex: 0,
+    insertId: null,
+  },
 
   setTrackVolume: (trackId: string, dB: number) =>
     set((state) => ({
@@ -373,6 +430,44 @@ export const useMixerStore = create<MixerStore>()((set) => ({
       masterVolume: Math.max(-60, Math.min(6, dB)),
       tracks: state.tracks.map((t) =>
         t.id === "track-master" ? { ...t, volume: dB } : t
+      ),
+    })),
+
+  openCompressorModal: (trackId: string, trackIndex: number, insertId: string) =>
+    set(() => ({
+      compressorModal: {
+        isOpen: true,
+        trackId,
+        trackIndex,
+        insertId,
+      },
+    })),
+
+  closeCompressorModal: () =>
+    set((state) => ({
+      compressorModal: {
+        ...state.compressorModal,
+        isOpen: false,
+      },
+    })),
+
+  updateInsertParams: (
+    trackId: string,
+    insertId: string,
+    params: Record<string, number | string | boolean>
+  ) =>
+    set((state) => ({
+      tracks: state.tracks.map((t) =>
+        t.id === trackId
+          ? {
+              ...t,
+              inserts: t.inserts.map((ins) =>
+                ins.id === insertId
+                  ? { ...ins, params: { ...ins.params, ...params } }
+                  : ins
+              ),
+            }
+          : t
       ),
     })),
 }));

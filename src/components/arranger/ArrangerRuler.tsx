@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useCallback, useRef } from "react";
-import { cn } from "@/lib/utils";
 import { snapToGrid, useArrangerStore } from "@/stores/arranger-store";
 import { useTransportStore } from "@/stores/transport-store";
 
@@ -18,7 +17,6 @@ export const ArrangerRuler: React.FC<ArrangerRulerProps> = ({
   const snapGrid = useArrangerStore((s) => s.snapGrid);
   const loopStartBar = useArrangerStore((s) => s.loopStartBar);
   const loopEndBar = useArrangerStore((s) => s.loopEndBar);
-  const setLoopRange = useArrangerStore((s) => s.setLoopRange);
   const storeTotalBars = useArrangerStore((s) => s.totalBars);
 
   const totalBars = propTotalBars || storeTotalBars;

@@ -3,6 +3,7 @@ pub mod audio;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
 use cpal::Stream;
 use rtrb::Producer;
@@ -10,8 +11,8 @@ use tauri::Manager;
 
 use crate::audio::{
     decode_audio_file, ensure_factory_samples, AudioCommand, AudioDeviceDescriptor, AudioEngine,
-    AudioRecorder, BrowserEntry, ChannelSyncData, MidiDeviceDescriptor, MidiManager,
-    ParsedMidiFile, RecordedClipMetadata, SampleData, SampleMetadata,
+    AudioRecorder, BrowserEntry, ChannelSyncData, CompressorParams, MidiDeviceDescriptor,
+    MidiManager, ParsedMidiFile, RecordedClipMetadata, SampleData, SampleMetadata,
 };
 
 pub struct AudioState {
@@ -21,6 +22,7 @@ pub struct AudioState {
     pub midi_manager: MidiManager,
     pub sample_cache: Mutex<HashMap<String, Arc<SampleData>>>,
     pub recorder: Mutex<AudioRecorder>,
+    pub compressor_meters: [Arc<AtomicU32>; 9],
 }
 
 // In CPAL on Windows, Stream contains !Send raw COM handles, but holding it
@@ -37,7 +39,7 @@ fn start_audio(state: tauri::State<'_, AudioState>) -> Result<String, String> {
         return Ok("Audio engine already active".into());
     }
 
-    match AudioEngine::start() {
+    match AudioEngine::start(state.compressor_meters.clone()) {
         Ok((cmd_prod, midi_prod, stream)) => {
             *prod_guard = Some(cmd_prod);
             *stream_guard = Some(stream);
@@ -351,6 +353,35 @@ fn set_recording_monitoring(
     Ok(())
 }
 
+#[tauri::command]
+fn set_compressor_params(
+    track_index: usize,
+    params: CompressorParams,
+    state: tauri::State<'_, AudioState>,
+) -> Result<(), String> {
+    let mut guard = state.producer.lock().map_err(|e| e.to_string())?;
+    if let Some(producer) = guard.as_mut() {
+        let _ = producer.push(AudioCommand::SetCompressorParams {
+            track_index,
+            params,
+        });
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_compressor_reduction(
+    track_index: usize,
+    state: tauri::State<'_, AudioState>,
+) -> Result<f32, String> {
+    if track_index < state.compressor_meters.len() {
+        let bits = state.compressor_meters[track_index].load(std::sync::atomic::Ordering::Relaxed);
+        Ok(f32::from_bits(bits))
+    } else {
+        Ok(0.0)
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -366,17 +397,21 @@ pub fn run() {
             // Ensure factory one-shot samples exist on startup
             ensure_factory_samples().ok();
 
+            let compressor_meters: [Arc<AtomicU32>; 9] =
+                std::array::from_fn(|_| Arc::new(AtomicU32::new(0)));
+
             // Attempt eager startup of the CPAL audio stream
-            let (initial_cmd_prod, initial_midi_prod, initial_stream) = match AudioEngine::start() {
-                Ok((cmd_p, midi_p, stream)) => {
-                    log::info!("AudioEngine started eagerly on setup");
-                    (Some(cmd_p), Some(midi_p), Some(stream))
-                }
-                Err(err) => {
-                    log::warn!("AudioEngine eager start deferred: {}", err);
-                    (None, None, None)
-                }
-            };
+            let (initial_cmd_prod, initial_midi_prod, initial_stream) =
+                match AudioEngine::start(compressor_meters.clone()) {
+                    Ok((cmd_p, midi_p, stream)) => {
+                        log::info!("AudioEngine started eagerly on setup");
+                        (Some(cmd_p), Some(midi_p), Some(stream))
+                    }
+                    Err(err) => {
+                        log::warn!("AudioEngine eager start deferred: {}", err);
+                        (None, None, None)
+                    }
+                };
 
             let midi_producer_arc = Arc::new(Mutex::new(initial_midi_prod));
             let midi_manager = MidiManager::new(Arc::clone(&midi_producer_arc));
@@ -388,6 +423,7 @@ pub fn run() {
                 midi_manager,
                 sample_cache: Mutex::new(HashMap::new()),
                 recorder: Mutex::new(AudioRecorder::new()),
+                compressor_meters,
             });
 
             Ok(())
@@ -412,7 +448,9 @@ pub fn run() {
             start_recording,
             stop_recording,
             get_recording_peak_level,
-            set_recording_monitoring
+            set_recording_monitoring,
+            set_compressor_params,
+            get_compressor_reduction
         ])
         .run(tauri::generate_context!())
         .expect("error while building tauri application");

@@ -55,6 +55,7 @@ pub struct SamplePlaybackVoice {
     pub channel_gain: f32,
     pub pitch_ratio: f32,
     pub is_active: bool,
+    pub channel_index: usize,
 }
 
 impl Default for SamplePlaybackVoice {
@@ -73,6 +74,7 @@ impl SamplePlaybackVoice {
             channel_gain: 1.0,
             pitch_ratio: 1.0,
             is_active: false,
+            channel_index: 0,
         }
     }
 
@@ -85,6 +87,7 @@ impl SamplePlaybackVoice {
         pitch_offset_semitones: f32,
         dsp_sample_rate: f32,
         sample_id: String,
+        channel_index: usize,
     ) {
         self.sample_id = sample_id;
         self.frames = Some(frames);
@@ -94,6 +97,7 @@ impl SamplePlaybackVoice {
         let semitone_ratio = 2.0_f32.powf(pitch_offset_semitones / 12.0);
         self.pitch_ratio = semitone_ratio * (self.source_sample_rate / dsp_sample_rate);
         self.is_active = true;
+        self.channel_index = channel_index;
     }
 
     #[inline(always)]
@@ -173,6 +177,7 @@ impl VoicePool {
         pitch_offset: f32,
         dsp_sample_rate: f32,
         sample_id: String,
+        channel_index: usize,
     ) {
         // Find first idle voice
         let mut target_idx = None;
@@ -206,6 +211,7 @@ impl VoicePool {
             pitch_offset,
             dsp_sample_rate,
             sample_id,
+            channel_index,
         );
     }
 
@@ -227,6 +233,24 @@ impl VoicePool {
             }
         }
         (mix_l, mix_r)
+    }
+
+    #[inline(always)]
+    pub fn process_channel_frames(
+        &mut self,
+        ch_l: &mut [f32],
+        ch_r: &mut [f32],
+    ) {
+        for v in &mut self.voices {
+            if v.is_active {
+                let (l, r) = v.process_frame();
+                let idx = v.channel_index;
+                if idx < ch_l.len() && idx < ch_r.len() {
+                    ch_l[idx] += l;
+                    ch_r[idx] += r;
+                }
+            }
+        }
     }
 }
 

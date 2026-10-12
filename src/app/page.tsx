@@ -17,6 +17,7 @@ import { PianoRoll } from "@/components/pianoroll/PianoRoll";
 import { SampleBrowser } from "@/components/browser/SampleBrowser";
 import { ChannelRack } from "@/components/sequencer/ChannelRack";
 import { ArrangerTimeline } from "@/components/arranger/ArrangerTimeline";
+import { CompressorModal } from "@/components/dsp/CompressorModal";
 import { TransportBar } from "@/components/transport/TransportBar";
 import { cn } from "@/lib/utils";
 import { useMixerStore } from "@/stores/mixer-store";
@@ -28,13 +29,11 @@ export default function Home() {
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
   const [isBrowserOpen, setIsBrowserOpen] = useState(true);
 
-  const channels = usePatternStore((state) => state.channels);
   const addChannel = usePatternStore((state) => state.addChannel);
   const position = useTransportStore((state) => state.position);
 
   const tracks = useMixerStore((state) => state.tracks);
   const selectedTrackId = useMixerStore((state) => state.selectedTrackId);
-  const selectTrack = useMixerStore((state) => state.selectTrack);
 
   const currentMixerTrack =
     tracks.find((t) => t.id === selectedTrackId) || tracks[0];
@@ -206,6 +205,9 @@ export default function Home() {
           )}
         </aside>
       </div>
+
+      {/* ── MODELED COMPRESSOR HARDWARE MODAL ── */}
+      <CompressorModal />
     </div>
   );
 }

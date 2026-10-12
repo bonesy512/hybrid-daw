@@ -9,12 +9,9 @@ import {
   FolderOpen,
   HardDrive,
   Music,
-  Play,
   RefreshCw,
   Search,
   Square,
-  Volume2,
-  Wand2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {

@@ -1,10 +1,12 @@
 use std::f32::consts::PI;
+use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, StreamConfig};
 use rtrb::{Consumer, Producer, RingBuffer};
 use serde::{Deserialize, Serialize};
 
+use crate::audio::compressor::{Compressor, CompressorParams};
 use crate::audio::sample_engine::{SampleData, SamplePlaybackVoice, VoicePool};
 
 pub const MAX_CHANNELS: usize = 8;
@@ -53,6 +55,10 @@ pub enum AudioCommand {
     StopPreview,
     SetMonitorConsumer(Option<Consumer<f32>>),
     SetMonitorGain(f32),
+    SetCompressorParams {
+        track_index: usize,
+        params: CompressorParams,
+    },
 }
 
 impl std::fmt::Debug for AudioCommand {
@@ -81,6 +87,9 @@ impl std::fmt::Debug for AudioCommand {
             AudioCommand::StopPreview => write!(f, "StopPreview"),
             AudioCommand::SetMonitorConsumer(_) => write!(f, "SetMonitorConsumer"),
             AudioCommand::SetMonitorGain(g) => write!(f, "SetMonitorGain({})", g),
+            AudioCommand::SetCompressorParams { track_index, .. } => {
+                write!(f, "SetCompressorParams(track: {})", track_index)
+            }
         }
     }
 }
@@ -243,6 +252,8 @@ pub struct DspProcessor {
     channel_samples: [Option<Arc<SampleData>>; MAX_CHANNELS],
     sample_voices: VoicePool,
     preview_voice: SamplePlaybackVoice,
+    channel_compressors: [Compressor; MAX_CHANNELS],
+    master_compressor: Compressor,
     rng: XorShift32,
     cmd_consumer: Consumer<AudioCommand>,
     midi_consumer: Consumer<AudioCommand>,
@@ -255,6 +266,7 @@ impl DspProcessor {
         sample_rate: f32,
         cmd_consumer: Consumer<AudioCommand>,
         midi_consumer: Consumer<AudioCommand>,
+        meter_atomics: &[Arc<AtomicU32>; MAX_CHANNELS + 1],
     ) -> Self {
         let initial_bpm = 140.0;
         let samples_per_step = ((sample_rate as f64 * 60.0) / (initial_bpm * 4.0)).round() as usize;
@@ -287,6 +299,12 @@ impl DspProcessor {
         // Snare (12)
         voices[3].steps[12] = true;
 
+        let channel_compressors = std::array::from_fn(|i| {
+            Compressor::new_with_meter(sample_rate, Arc::clone(&meter_atomics[i]))
+        });
+        let master_compressor =
+            Compressor::new_with_meter(sample_rate, Arc::clone(&meter_atomics[MAX_CHANNELS]));
+
         Self {
             sample_rate,
             bpm: initial_bpm,
@@ -298,6 +316,8 @@ impl DspProcessor {
             channel_samples: std::array::from_fn(|_| None),
             sample_voices: VoicePool::new(),
             preview_voice: SamplePlaybackVoice::new(),
+            channel_compressors,
+            master_compressor,
             rng: XorShift32::new(0xda3_1400),
             cmd_consumer,
             midi_consumer,
@@ -359,6 +379,7 @@ impl DspProcessor {
                             pitch_offset,
                             self.sample_rate,
                             sample_id,
+                            channel_index,
                         );
                     } else {
                         self.voices[channel_index].trigger();
@@ -375,6 +396,7 @@ impl DspProcessor {
                             0.0,
                             self.sample_rate,
                             sample.id.clone(),
+                            channel_index,
                         );
                     } else {
                         self.voices[channel_index].trigger();
@@ -400,6 +422,7 @@ impl DspProcessor {
                             0.0,
                             self.sample_rate,
                             sample.id.clone(),
+                            voice_idx,
                         );
                     } else {
                         self.voices[voice_idx].trigger();
@@ -415,6 +438,7 @@ impl DspProcessor {
                     0.0,
                     self.sample_rate,
                     sample.id.clone(),
+                    0,
                 );
             }
             AudioCommand::StopPreview => {
@@ -425,6 +449,13 @@ impl DspProcessor {
             }
             AudioCommand::SetMonitorGain(gain) => {
                 self.monitor_gain = gain.clamp(0.0, 4.0);
+            }
+            AudioCommand::SetCompressorParams { track_index, params } => {
+                if track_index < MAX_CHANNELS {
+                    self.channel_compressors[track_index].set_params(params);
+                } else if track_index == MAX_CHANNELS {
+                    self.master_compressor.set_params(params);
+                }
             }
         }
     }
@@ -460,6 +491,7 @@ impl DspProcessor {
                                 0.0,
                                 self.sample_rate,
                                 sample.id.clone(),
+                                idx,
                             );
                         } else {
                             voice.trigger();
@@ -475,20 +507,27 @@ impl DspProcessor {
             }
         }
 
-        // Sum synthetic percussion voices
+        // Sum synthetic percussion voices + channel samples into per-channel buffers
+        let mut ch_mix_l = [0.0f32; MAX_CHANNELS];
+        let mut ch_mix_r = [0.0f32; MAX_CHANNELS];
+
+        for idx in 0..MAX_CHANNELS {
+            let syn = self.voices[idx].process_sample(self.sample_rate, &mut self.rng);
+            ch_mix_l[idx] += syn;
+            ch_mix_r[idx] += syn;
+        }
+
+        self.sample_voices.process_channel_frames(&mut ch_mix_l, &mut ch_mix_r);
+
+        // Process each channel through its modeled stereo compressor and sum
         let mut mix_left = 0.0;
         let mut mix_right = 0.0;
 
-        for voice in &mut self.voices {
-            let syn = voice.process_sample(self.sample_rate, &mut self.rng);
-            mix_left += syn;
-            mix_right += syn;
+        for idx in 0..MAX_CHANNELS {
+            let (c_l, c_r) = self.channel_compressors[idx].process_frame(ch_mix_l[idx], ch_mix_r[idx]);
+            mix_left += c_l;
+            mix_right += c_r;
         }
-
-        // Sum active sample playback voices (stereo)
-        let (s_left, s_right) = self.sample_voices.process_frame();
-        mix_left += s_left;
-        mix_right += s_right;
 
         // Sum audition / preview voice
         let (p_left, p_right) = self.preview_voice.process_frame();
@@ -504,9 +543,12 @@ impl DspProcessor {
             }
         }
 
+        // Process full stereo mix through modeled master bus compressor
+        let (master_l, master_r) = self.master_compressor.process_frame(mix_left, mix_right);
+
         // Master soft clipping
-        let clamped_l = (mix_left * 0.8).clamp(-1.0, 1.0);
-        let clamped_r = (mix_right * 0.8).clamp(-1.0, 1.0);
+        let clamped_l = (master_l * 0.8).clamp(-1.0, 1.0);
+        let clamped_r = (master_r * 0.8).clamp(-1.0, 1.0);
         (clamped_l, clamped_r)
     }
 }
@@ -515,7 +557,9 @@ pub struct AudioEngine;
 
 impl AudioEngine {
     /// Initialize CPAL audio output stream with dual lock-free command ringbuffers (UI and MIDI).
-    pub fn start() -> Result<
+    pub fn start(
+        meter_atomics: [Arc<AtomicU32>; MAX_CHANNELS + 1],
+    ) -> Result<
         (Producer<AudioCommand>, Producer<AudioCommand>, Stream),
         Box<dyn std::error::Error + Send + Sync>,
     > {
@@ -534,7 +578,7 @@ impl AudioEngine {
         // 256-command lock-free ringbuffer for UI commands, 512 for MIDI hardware events
         let (cmd_producer, cmd_consumer) = RingBuffer::<AudioCommand>::new(256);
         let (midi_producer, midi_consumer) = RingBuffer::<AudioCommand>::new(512);
-        let mut dsp = DspProcessor::new(sample_rate, cmd_consumer, midi_consumer);
+        let mut dsp = DspProcessor::new(sample_rate, cmd_consumer, midi_consumer, &meter_atomics);
 
         let err_fn = |err| {
             log::error!("CPAL audio stream error: {:?}", err);

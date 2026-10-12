@@ -154,6 +154,13 @@ export function ChannelStrip({ track, isMaster = false }: ChannelStripProps) {
   const removeInsert = useMixerStore((state) => state.removeInsert);
   const setSendAmount = useMixerStore((state) => state.setSendAmount);
   const toggleSendPreFader = useMixerStore((state) => state.toggleSendPreFader);
+  const tracks = useMixerStore((state) => state.tracks);
+  const openCompressorModal = useMixerStore((state) => state.openCompressorModal);
+
+  const trackIndex =
+    isMaster || track.id === "track-master"
+      ? 8
+      : Math.max(0, tracks.findIndex((t) => t.id === track.id));
 
   const [isEditingVolume, setIsEditingVolume] = useState(false);
   const [volInputVal, setVolInputVal] = useState(track.volume.toFixed(1));
@@ -298,12 +305,24 @@ export function ChannelStrip({ track, isMaster = false }: ChannelStripProps) {
           {track.inserts.map((ins) => (
             <div
               key={ins.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (ins.type === "compressor") {
+                  openCompressorModal(track.id, trackIndex, ins.id);
+                }
+              }}
               className={cn(
                 "group flex h-5 items-center justify-between rounded-[1px] border px-1 font-mono text-[8px] transition-colors",
+                ins.type === "compressor" && "cursor-pointer hover:border-telemetry-orange/70",
                 ins.isActive
                   ? "border-zinc-700/80 bg-zinc-900/90 text-zinc-200"
                   : "border-zinc-900 bg-zinc-950 text-zinc-600 line-through"
               )}
+              title={
+                ins.type === "compressor"
+                  ? `Open Modeled Compressor (${ins.name})`
+                  : ins.name
+              }
             >
               {/* Power LED toggle */}
               <button
@@ -321,7 +340,10 @@ export function ChannelStrip({ track, isMaster = false }: ChannelStripProps) {
                 title={ins.isActive ? "Bypass Effect" : "Activate Effect"}
               />
 
-              <span className="truncate flex-1 text-left font-semibold">
+              <span className={cn(
+                "truncate flex-1 text-left font-semibold",
+                ins.type === "compressor" && "group-hover:text-telemetry-orange transition-colors"
+              )}>
                 {ins.name}
               </span>
 

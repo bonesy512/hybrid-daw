@@ -600,3 +600,51 @@ export async function setRecordingMonitoring(enabled: boolean): Promise<void> {
   }
 }
 
+export type CompressorCircuit = "Platinum" | "VintageVca" | "VintageFet" | "VintageOpto";
+
+export interface CompressorParams {
+  circuit: CompressorCircuit;
+  threshold_db: number;
+  ratio: number;
+  attack_ms: number;
+  release_ms: number;
+  knee: number;
+  makeup_gain_db: number;
+  sidechain_lowcut_hz: number;
+  is_enabled: boolean;
+  listen_sidechain: boolean;
+}
+
+/**
+ * Updates real-time parameters for the modeled compressor on trackIndex (0..7 channel, 8 master).
+ */
+export async function setCompressorParams(
+  trackIndex: number,
+  params: CompressorParams
+): Promise<void> {
+  if (!isTauriEnvironment()) {
+    return;
+  }
+  try {
+    await invoke("set_compressor_params", { trackIndex, params });
+  } catch (err) {
+    console.warn("[AudioBridge] invoke('set_compressor_params') error:", err);
+  }
+}
+
+/**
+ * Polls the current gain reduction in dB from the Rust audio thread atomic meter.
+ */
+export async function getCompressorReduction(
+  trackIndex: number
+): Promise<number> {
+  if (!isTauriEnvironment()) {
+    return 0.0;
+  }
+  try {
+    return await invoke<number>("get_compressor_reduction", { trackIndex });
+  } catch {
+    return 0.0;
+  }
+}
+
