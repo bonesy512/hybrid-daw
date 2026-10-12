@@ -12,7 +12,10 @@ use crate::audio::sample_engine::{SampleData, SamplePlaybackVoice, VoicePool};
 use crate::audio::synth::{PolySynth, SynthParams};
 
 pub const MAX_CHANNELS: usize = 8;
-pub const STEP_COUNT: usize = 16;
+/// Fixed capacity of every channel's step buffer (supports 16/32/64-step patterns).
+pub const MAX_STEPS: usize = 64;
+/// Default active pattern length until the UI sends `SetStepCount`.
+pub const DEFAULT_STEP_COUNT: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SoundType {
@@ -26,9 +29,11 @@ pub enum AudioCommand {
     Play,
     Stop,
     SetBpm(f64),
+    /// Active pattern length (loop wrap point), clamped to 1..=MAX_STEPS.
+    SetStepCount(usize),
     UpdatePattern {
         channel_index: usize,
-        steps: [bool; STEP_COUNT],
+        steps: [bool; MAX_STEPS],
     },
     TriggerVoice {
         channel_index: usize,
@@ -94,6 +99,7 @@ impl std::fmt::Debug for AudioCommand {
             AudioCommand::Play => write!(f, "Play"),
             AudioCommand::Stop => write!(f, "Stop"),
             AudioCommand::SetBpm(bpm) => write!(f, "SetBpm({})", bpm),
+            AudioCommand::SetStepCount(n) => write!(f, "SetStepCount({})", n),
             AudioCommand::UpdatePattern { channel_index, .. } => {
                 write!(f, "UpdatePattern(ch: {})", channel_index)
             }
@@ -172,14 +178,14 @@ impl XorShift32 {
 #[derive(Clone, Copy)]
 pub struct PercussionVoice {
     pub sound_type: SoundType,
-    pub steps: [bool; STEP_COUNT],
+    pub steps: [bool; MAX_STEPS],
     pub is_active: bool,
     pub sample_index: usize,
     pub phase: f32,
 }
 
 impl PercussionVoice {
-    pub fn new(sound_type: SoundType, steps: [bool; STEP_COUNT]) -> Self {
+    pub fn new(sound_type: SoundType, steps: [bool; MAX_STEPS]) -> Self {
         Self {
             sound_type,
             steps,
@@ -293,6 +299,7 @@ pub struct DspProcessor {
     samples_per_step: usize,
     sample_counter: usize,
     current_step: usize,
+    step_count: usize,
     voices: Box<[PercussionVoice; MAX_CHANNELS]>,
     channel_samples: Box<[Option<Arc<SampleData>>; MAX_CHANNELS]>,
     sample_voices: Box<VoicePool>,
@@ -323,14 +330,14 @@ impl DspProcessor {
 
         let voices: Box<[PercussionVoice; MAX_CHANNELS]> = {
             let mut vec = Vec::with_capacity(MAX_CHANNELS);
-            vec.push(PercussionVoice::new(SoundType::Kick, [false; STEP_COUNT]));
-            vec.push(PercussionVoice::new(SoundType::Clap, [false; STEP_COUNT]));
-            vec.push(PercussionVoice::new(SoundType::HiHat, [false; STEP_COUNT]));
-            vec.push(PercussionVoice::new(SoundType::Snare, [false; STEP_COUNT]));
-            vec.push(PercussionVoice::new(SoundType::Kick, [false; STEP_COUNT]));
-            vec.push(PercussionVoice::new(SoundType::Clap, [false; STEP_COUNT]));
-            vec.push(PercussionVoice::new(SoundType::HiHat, [false; STEP_COUNT]));
-            vec.push(PercussionVoice::new(SoundType::Snare, [false; STEP_COUNT]));
+            vec.push(PercussionVoice::new(SoundType::Kick, [false; MAX_STEPS]));
+            vec.push(PercussionVoice::new(SoundType::Clap, [false; MAX_STEPS]));
+            vec.push(PercussionVoice::new(SoundType::HiHat, [false; MAX_STEPS]));
+            vec.push(PercussionVoice::new(SoundType::Snare, [false; MAX_STEPS]));
+            vec.push(PercussionVoice::new(SoundType::Kick, [false; MAX_STEPS]));
+            vec.push(PercussionVoice::new(SoundType::Clap, [false; MAX_STEPS]));
+            vec.push(PercussionVoice::new(SoundType::HiHat, [false; MAX_STEPS]));
+            vec.push(PercussionVoice::new(SoundType::Snare, [false; MAX_STEPS]));
             vec.into_boxed_slice()
                 .try_into()
                 .unwrap_or_else(|_| panic!("voices size mismatch"))
@@ -391,6 +398,7 @@ impl DspProcessor {
             samples_per_step,
             sample_counter: 0,
             current_step: 0,
+            step_count: DEFAULT_STEP_COUNT,
             voices,
             channel_samples,
             sample_voices: Box::new(VoicePool::new()),
@@ -432,6 +440,12 @@ impl DspProcessor {
                 self.bpm = sanitized;
                 self.samples_per_step =
                     ((self.sample_rate as f64 * 60.0) / (sanitized * 4.0)).round() as usize;
+            }
+            AudioCommand::SetStepCount(count) => {
+                self.step_count = count.clamp(1, MAX_STEPS);
+                if self.current_step >= self.step_count {
+                    self.current_step %= self.step_count;
+                }
             }
             AudioCommand::UpdatePattern {
                 channel_index,
@@ -606,7 +620,7 @@ impl DspProcessor {
         // Check for new commands from UI thread and MIDI controller thread
         self.drain_commands();
 
-        // Advance 16-step sequencer clock if playing
+        // Advance step sequencer clock (wraps at dynamic step_count) if playing
         if self.is_playing {
             if self.sample_counter == 0 {
                 // Step boundary reached: trigger active voices (sample voices if assigned, else synth)
@@ -635,7 +649,7 @@ impl DspProcessor {
             self.sample_counter += 1;
             if self.sample_counter >= self.samples_per_step {
                 self.sample_counter = 0;
-                self.current_step = (self.current_step + 1) % STEP_COUNT;
+                self.current_step = (self.current_step + 1) % self.step_count;
             }
         }
 

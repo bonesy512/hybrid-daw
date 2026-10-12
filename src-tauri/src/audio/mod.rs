@@ -12,7 +12,7 @@ pub use synth::{
     AhdsrParams, FilterMode, FilterParams, LfoParams, LfoWaveform, OscParams, OscWaveform,
     PolySynth, SynthParams, SynthSnapshot, POLYPHONY_VOICES,
 };
-pub use engine::{AudioCommand, AudioEngine, ChannelSyncData};
+pub use engine::{AudioCommand, AudioEngine, ChannelSyncData, MAX_STEPS};
 pub use midi::{
     MidiDeviceDescriptor, MidiManager, ParsedMidiFile, ParsedMidiNote, ParsedMidiTrack,
 };

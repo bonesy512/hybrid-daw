@@ -350,7 +350,8 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
             id: c.id,
             name: c.name,
             steps: c.steps,
-          }))
+          })),
+          currentStepCount
         ).catch(() => {});
 
         return { channels: updatedChannels };
@@ -361,11 +362,14 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
   // Sync currentStep with transport position when playing
   useEffect(() => {
     if (isPlaying) {
-      const step =
-        ((position.beats - 1) * 4 + Math.floor(position.ticks / 240)) % stepCount;
+      const totalStepsFromStart =
+        (position.bars - 1) * 16 +
+        (position.beats - 1) * 4 +
+        Math.floor(position.ticks / 240);
+      const step = Math.max(0, totalStepsFromStart % stepCount);
       setCurrentStep(step);
     }
-  }, [isPlaying, position.beats, position.ticks, stepCount, setCurrentStep]);
+  }, [isPlaying, position.bars, position.beats, position.ticks, stepCount, setCurrentStep]);
 
   const handleOpenSettings = (channel: Channel) => {
     setSelectedChannel(channel);
@@ -761,11 +765,11 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
 
                 {/* ── Right Module: 16/32 Step Grid ── */}
                 <div className="flex flex-1 items-center gap-1 pl-3">
-                  {channel.steps.slice(0, stepCount).map((isActive, stepIdx) => (
+                  {Array.from({ length: stepCount }).map((_, stepIdx) => (
                     <StepPad
                       key={stepIdx}
                       stepIndex={stepIdx}
-                      isActive={isActive}
+                      isActive={Boolean(channel.steps[stepIdx])}
                       isCurrentPlayhead={isPlaying && currentStep === stepIdx}
                       channelColor={channel.color}
                       onClick={() => toggleStep(channel.id, stepIdx)}

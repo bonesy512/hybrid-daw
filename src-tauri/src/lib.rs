@@ -13,7 +13,7 @@ use crate::audio::{
     decode_audio_file, ensure_factory_samples, AudioCommand, AudioDeviceDescriptor, AudioEngine,
     AudioRecorder, BrowserEntry, ChannelSyncData, CompressorParams, EqualizerParams,
     MidiDeviceDescriptor, MidiManager, ParsedMidiFile, RecordedClipMetadata, SampleData,
-    SampleMetadata, SynthParams, SPECTRUM_BINS,
+    SampleMetadata, SynthParams, MAX_STEPS, SPECTRUM_BINS,
 };
 
 pub struct AudioState {
@@ -93,13 +93,24 @@ fn set_tempo(bpm: f64, state: tauri::State<'_, AudioState>) -> Result<(), String
 #[tauri::command]
 fn sync_pattern(
     channels: Vec<ChannelSyncData>,
+    step_count: Option<usize>,
     state: tauri::State<'_, AudioState>,
 ) -> Result<(), String> {
     let mut guard = state.producer.lock().map_err(|e| e.to_string())?;
     if let Some(producer) = guard.as_mut() {
+        // Update loop wrap point first so newly-sent steps beyond 16 are reachable
+        let resolved_count = step_count.unwrap_or_else(|| {
+            channels
+                .iter()
+                .map(|c| c.steps.len())
+                .max()
+                .unwrap_or(16)
+        });
+        let _ = producer.push(AudioCommand::SetStepCount(resolved_count.clamp(1, MAX_STEPS)));
+
         for (idx, ch) in channels.iter().enumerate() {
-            let mut steps = [false; 16];
-            for (i, &step) in ch.steps.iter().take(16).enumerate() {
+            let mut steps = [false; MAX_STEPS];
+            for (i, &step) in ch.steps.iter().take(MAX_STEPS).enumerate() {
                 steps[i] = step;
             }
             let _ = producer.push(AudioCommand::UpdatePattern {
@@ -107,6 +118,18 @@ fn sync_pattern(
                 steps,
             });
         }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn set_pattern_step_count(
+    step_count: usize,
+    state: tauri::State<'_, AudioState>,
+) -> Result<(), String> {
+    let mut guard = state.producer.lock().map_err(|e| e.to_string())?;
+    if let Some(producer) = guard.as_mut() {
+        let _ = producer.push(AudioCommand::SetStepCount(step_count.clamp(1, MAX_STEPS)));
     }
     Ok(())
 }
@@ -586,6 +609,7 @@ pub fn run() {
             stop_transport,
             set_tempo,
             sync_pattern,
+            set_pattern_step_count,
             get_midi_inputs,
             connect_midi_input,
             disconnect_midi_input,

@@ -32,6 +32,7 @@ class WebAudioFallbackEngine {
   private currentStep = 0;
   private timer: number | null = null;
   private channels: ChannelSyncData[] = [];
+  private stepCount = 16;
 
   public init(): void {
     if (typeof window === "undefined") return;
@@ -69,8 +70,21 @@ class WebAudioFallbackEngine {
     }
   }
 
-  public syncPattern(channels: ChannelSyncData[]): void {
+  public setStepCount(count: number): void {
+    this.stepCount = Math.max(1, count);
+    if (this.currentStep >= this.stepCount) {
+      this.currentStep %= this.stepCount;
+    }
+  }
+
+  public syncPattern(channels: ChannelSyncData[], stepCount?: number): void {
     this.channels = channels;
+    if (stepCount) {
+      this.setStepCount(stepCount);
+    } else {
+      const maxLen = Math.max(...channels.map((c) => c.steps.length), 16);
+      this.setStepCount(maxLen);
+    }
   }
 
   public play(): void {
@@ -81,7 +95,7 @@ class WebAudioFallbackEngine {
     const stepIntervalMs = (60000 / this.bpm) / 4;
     this.timer = window.setInterval(() => {
       this.triggerStep(this.currentStep);
-      this.currentStep = (this.currentStep + 1) % 16;
+      this.currentStep = (this.currentStep + 1) % this.stepCount;
     }, stepIntervalMs);
   }
 
@@ -296,17 +310,37 @@ export async function setTempo(bpm: number): Promise<void> {
 /**
  * Synchronizes step sequences for all channels to the Rust DSP engine.
  */
-export async function syncPattern(channels: ChannelSyncData[]): Promise<void> {
+export async function syncPattern(
+  channels: ChannelSyncData[],
+  stepCount?: number
+): Promise<void> {
   if (!isTauriEnvironment()) {
-    fallbackEngine.syncPattern(channels);
+    fallbackEngine.syncPattern(channels, stepCount);
     return;
   }
 
   try {
-    await invoke("sync_pattern", { channels });
+    await invoke("sync_pattern", { channels, stepCount: stepCount ?? null });
   } catch (err) {
     console.warn("[AudioBridge] invoke('sync_pattern') error:", err);
-    fallbackEngine.syncPattern(channels);
+    fallbackEngine.syncPattern(channels, stepCount);
+  }
+}
+
+/**
+ * Updates the active step loop count (16, 32, etc.) in the Rust audio engine.
+ */
+export async function setPatternStepCount(stepCount: number): Promise<void> {
+  if (!isTauriEnvironment()) {
+    fallbackEngine.setStepCount(stepCount);
+    return;
+  }
+
+  try {
+    await invoke("set_pattern_step_count", { stepCount });
+  } catch (err) {
+    console.warn("[AudioBridge] invoke('set_pattern_step_count') error:", err);
+    fallbackEngine.setStepCount(stepCount);
   }
 }
 
