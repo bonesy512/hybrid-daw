@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -9,118 +9,36 @@ import {
   Plus,
   SlidersHorizontal,
 } from "lucide-react";
+import { ChannelRack } from "@/components/sequencer/ChannelRack";
 import { TransportBar } from "@/components/transport/TransportBar";
 import { cn } from "@/lib/utils";
+import { usePatternStore } from "@/stores/pattern-store";
 import { useTransportStore } from "@/stores/transport-store";
 
-interface Channel {
-  id: string;
-  name: string;
-  color: string;
-  type: "audio" | "midi";
-  pan: number;
-  volume: number;
-  muted: boolean;
-  solo: boolean;
-  steps: boolean[];
-}
-
-const INITIAL_CHANNELS: Channel[] = [
-  {
-    id: "ch-1",
-    name: "909 KICK // SUB",
-    color: "#ff4400",
-    type: "midi",
-    pan: 0,
-    volume: 0.85,
-    muted: false,
-    solo: false,
-    steps: [true, false, false, false, true, false, false, false, true, false, false, false, true, false, false, false],
-  },
-  {
-    id: "ch-2",
-    name: "ANALOG SNARE",
-    color: "#00f59b",
-    type: "midi",
-    pan: 0,
-    volume: 0.72,
-    muted: false,
-    solo: false,
-    steps: [false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false],
-  },
-  {
-    id: "ch-3",
-    name: "CLOSED HAT 808",
-    color: "#a1a1aa",
-    type: "midi",
-    pan: 15,
-    volume: 0.6,
-    muted: false,
-    solo: false,
-    steps: [true, false, true, false, true, false, true, false, true, false, true, false, true, false, true, false],
-  },
-  {
-    id: "ch-4",
-    name: "303 ACID BASS",
-    color: "#ff4400",
-    type: "midi",
-    pan: -10,
-    volume: 0.8,
-    muted: false,
-    solo: false,
-    steps: [true, false, false, true, false, false, true, false, false, true, false, false, true, true, false, false],
-  },
-  {
-    id: "ch-5",
-    name: "VOCAL STEM // DRY",
-    color: "#38bdf8",
-    type: "audio",
-    pan: 0,
-    volume: 0.9,
-    muted: false,
-    solo: false,
-    steps: [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
-  },
-];
-
 export default function Home() {
-  const [channels, setChannels] = useState<Channel[]>(INITIAL_CHANNELS);
   const [activeTab, setActiveTab] = useState<"rack" | "arranger">("rack");
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
-  const [selectedChannelId, setSelectedChannelId] = useState<string>("ch-1");
+  const [selectedChannelId, setSelectedChannelId] = useState<string>("ch-kick-808");
 
+  const channels = usePatternStore((state) => state.channels);
+  const addChannel = usePatternStore((state) => state.addChannel);
   const position = useTransportStore((state) => state.position);
-  const isPlaying = useTransportStore((state) => state.isPlaying);
 
-  // Toggle step sequencer pad
-  const toggleStep = (channelId: string, stepIndex: number) => {
-    setChannels((prev) =>
-      prev.map((ch) => {
-        if (ch.id !== channelId) return ch;
-        const newSteps = [...ch.steps];
-        newSteps[stepIndex] = !newSteps[stepIndex];
-        return { ...ch, steps: newSteps };
-      })
-    );
-  };
-
-  // Toggle channel mute
-  const toggleMute = (channelId: string) => {
-    setChannels((prev) =>
-      prev.map((ch) => (ch.id === channelId ? { ...ch, muted: !ch.muted } : ch))
-    );
-  };
-
-  // Toggle channel solo
-  const toggleSolo = (channelId: string) => {
-    setChannels((prev) =>
-      prev.map((ch) => (ch.id === channelId ? { ...ch, solo: !ch.solo } : ch))
-    );
-  };
-
-  // Current playing 16th-note step (0..15) mapped from beats & ticks
-  const currentStep = ((position.beats - 1) * 4 + Math.floor(position.ticks / 240)) % 16;
-  const selectedChannel = channels.find((c) => c.id === selectedChannelId) || channels[0];
+  // Sync or fallback selected channel
+  const selectedChannel =
+    channels.find((c) => c.id === selectedChannelId) || channels[0] || {
+      id: "ch-default",
+      name: "MASTER TRACK",
+      color: "#ff4400",
+      sampleUrl: "synths/master",
+      pan: 0,
+      volume: 0.8,
+      isMuted: false,
+      isSolo: false,
+      pitchOffset: 0,
+      timeShift: 0,
+      steps: [],
+    };
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#09090b] font-mono text-zinc-200 select-none">
@@ -169,11 +87,14 @@ export default function Home() {
                 <span className="size-1.5 rounded-full bg-telemetry-green" />
                 <span>SNAP: 1/16</span>
               </span>
-              <span className="hidden sm:inline">PATTERN 01 [4 BARS]</span>
+              <span className="hidden sm:inline">
+                BAR {position.bars} : BEAT {position.beats}
+              </span>
               <button
                 type="button"
-                className="flex items-center gap-1 rounded-xs border border-zinc-800 px-2 py-0.5 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
-                title="Add New Channel"
+                onClick={() => addChannel("Custom Track", "synths/analog", "#00f59b")}
+                className="flex items-center gap-1 rounded-xs border border-zinc-800 px-2 py-0.5 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200 transition-colors"
+                title="Add New Track"
               >
                 <Plus className="size-3 text-telemetry-orange" />
                 <span>ADD TRACK</span>
@@ -182,144 +103,18 @@ export default function Home() {
           </div>
 
           {/* Workspace Body */}
-          <div className="flex-1 overflow-auto p-4">
+          <div className="flex-1 overflow-hidden p-3">
             {activeTab === "rack" ? (
-              /* ── CHANNEL RACK VIEW ── */
-              <div className="flex flex-col gap-2">
-                {/* Sequencer Grid Header with 16-step indicators */}
-                <div className="flex items-center border-b border-zinc-800 pb-2">
-                  <div className="w-56 pr-2 font-mono text-[9px] tracking-wider text-zinc-500 uppercase">
-                    CHANNEL STRIP // ROUTE
-                  </div>
-                  <div className="flex flex-1 items-center gap-1 font-mono text-[9px] text-zinc-500">
-                    {[1, 2, 3, 4].map((beat) => (
-                      <div
-                        key={beat}
-                        className="flex flex-1 items-center justify-between px-1 border-l border-zinc-800/80"
-                      >
-                        <span className="text-zinc-400 font-bold">BEAT {beat}</span>
-                        <span className="text-[8px] text-zinc-600">.1 .2 .3 .4</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Channel Rows */}
-                {channels.map((channel) => {
-                  const isSelected = channel.id === selectedChannelId;
-                  return (
-                    <div
-                      key={channel.id}
-                      onClick={() => setSelectedChannelId(channel.id)}
-                      className={cn(
-                        "group flex items-center rounded-sm border bg-[#0d0d12] p-1.5 transition-all cursor-pointer",
-                        isSelected
-                          ? "border-zinc-600 bg-zinc-900/60 shadow-[0_0_8px_rgba(0,0,0,0.5)]"
-                          : "border-zinc-800/80 hover:border-zinc-700"
-                      )}
-                    >
-                      {/* Channel Info & Quick Controls */}
-                      <div className="flex w-52 shrink-0 items-center justify-between pr-3 border-r border-zinc-800">
-                        <div className="flex items-center gap-2 overflow-hidden">
-                          <div
-                            className="h-6 w-1 rounded-xs shrink-0"
-                            style={{ backgroundColor: channel.color }}
-                          />
-                          <div className="truncate">
-                            <div className="truncate font-mono text-xs font-bold text-zinc-200">
-                              {channel.name}
-                            </div>
-                            <div className="font-mono text-[8px] text-zinc-500 uppercase">
-                              {channel.type === "midi" ? "SYNTH ENGINE" : "AUDIO STREAM"}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Mute / Solo Buttons */}
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleMute(channel.id);
-                            }}
-                            className={cn(
-                              "flex size-5 items-center justify-center rounded-[2px] border font-mono text-[9px] font-bold transition-colors",
-                              channel.muted
-                                ? "border-red-500/80 bg-red-950/80 text-red-400"
-                                : "border-zinc-800 bg-[#070709] text-zinc-500 hover:text-zinc-300"
-                            )}
-                            title="Mute"
-                          >
-                            M
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleSolo(channel.id);
-                            }}
-                            className={cn(
-                              "flex size-5 items-center justify-center rounded-[2px] border font-mono text-[9px] font-bold transition-colors",
-                              channel.solo
-                                ? "border-amber-500/80 bg-amber-950/80 text-amber-400"
-                                : "border-zinc-800 bg-[#070709] text-zinc-500 hover:text-zinc-300"
-                            )}
-                            title="Solo"
-                          >
-                            S
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* 16-Step Trigger Sequencer Matrix */}
-                      <div className="flex flex-1 items-center gap-1 pl-3">
-                        {channel.steps.map((isActive, stepIdx) => {
-                          const isBeatStart = stepIdx % 4 === 0;
-                          const isPlayheadHere = isPlaying && currentStep === stepIdx;
-
-                          return (
-                            <button
-                              key={stepIdx}
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleStep(channel.id, stepIdx);
-                              }}
-                              className={cn(
-                                "relative h-8 flex-1 rounded-[2px] border transition-all duration-75 select-none",
-                                // Beat grouping visual accent
-                                isBeatStart ? "border-zinc-700/80" : "border-zinc-800/80",
-                                // Active step trigger state
-                                isActive
-                                  ? "bg-zinc-200 border-white text-black shadow-[0_0_8px_rgba(255,255,255,0.4)]"
-                                  : "bg-[#050508] hover:bg-zinc-800/50",
-                                // Real-time running playhead sweep highlight
-                                isPlayheadHere &&
-                                  "ring-2 ring-telemetry-green ring-offset-1 ring-offset-black"
-                              )}
-                              title={`Step ${stepIdx + 1} (${isActive ? "ON" : "OFF"})`}
-                            >
-                              {isActive && (
-                                <div
-                                  className="absolute inset-x-0 bottom-0 h-1"
-                                  style={{ backgroundColor: channel.color }}
-                                />
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              /* ── DEDICATED CHANNEL RACK & STEP SEQUENCER ── */
+              <ChannelRack />
             ) : (
               /* ── ARRANGER TIMELINE VIEW ── */
-              <div className="flex flex-col rounded-sm border border-zinc-800 bg-[#0c0c10] p-3">
+              <div className="flex h-full flex-col overflow-y-auto rounded-sm border border-zinc-800 bg-[#0c0c10] p-3">
                 {/* Timeline Bar Ruler */}
                 <div className="flex h-8 items-center border-b border-zinc-800 bg-[#07070a] px-3 font-mono text-xs text-zinc-400">
-                  <div className="w-48 text-[9px] text-zinc-500 uppercase">TRACK LANES</div>
+                  <div className="w-56 text-[9px] text-zinc-500 uppercase">
+                    TRACK LANES // ARRANGEMENT
+                  </div>
                   <div className="flex flex-1 justify-between font-mono text-[10px]">
                     {[1, 2, 3, 4, 5, 6, 7, 8].map((bar) => (
                       <span key={bar} className="border-l border-zinc-800 pl-1 text-zinc-400">
@@ -329,12 +124,21 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Track Lanes */}
+                {/* Track Lanes connected to PatternStore */}
                 <div className="flex flex-col divide-y divide-zinc-800/60">
                   {channels.map((ch, idx) => (
-                    <div key={ch.id} className="flex h-16 items-center">
-                      <div className="flex w-48 shrink-0 flex-col justify-center pr-3">
-                        <span className="font-mono text-xs font-bold text-zinc-200">
+                    <div
+                      key={ch.id}
+                      onClick={() => setSelectedChannelId(ch.id)}
+                      className={cn(
+                        "flex h-16 items-center px-2 cursor-pointer transition-colors",
+                        selectedChannelId === ch.id
+                          ? "bg-zinc-900/40"
+                          : "hover:bg-zinc-900/20"
+                      )}
+                    >
+                      <div className="flex w-56 shrink-0 flex-col justify-center pr-3">
+                        <span className="font-mono text-xs font-bold text-zinc-200 truncate">
                           {ch.name}
                         </span>
                         <span className="font-mono text-[9px] text-zinc-500">
@@ -354,7 +158,7 @@ export default function Home() {
                             className="font-mono text-[10px] font-bold uppercase tracking-wider"
                             style={{ color: ch.color }}
                           >
-                            CLIP_{idx + 1} {"//"} [01:01 - 04:04]
+                            PATTERN_01 {"//"} [01:01 - 04:04]
                           </span>
                         </div>
                       </div>
@@ -411,15 +215,30 @@ export default function Home() {
                     className="font-mono text-[9px] font-bold uppercase"
                     style={{ color: selectedChannel.color }}
                   >
-                    {selectedChannel.type}
+                    INSERT ROUTE
                   </span>
                 </div>
-                <div className="mt-2 font-mono text-sm font-black text-zinc-100">
+                <div className="mt-2 font-mono text-sm font-black text-zinc-100 truncate">
                   {selectedChannel.name}
                 </div>
                 <div className="mt-1 flex justify-between font-mono text-[10px] text-zinc-400">
                   <span>ROUTING: BUS 1-2</span>
-                  <span>PAN: {selectedChannel.pan > 0 ? `R${selectedChannel.pan}` : selectedChannel.pan < 0 ? `L${Math.abs(selectedChannel.pan)}` : "CENTER"}</span>
+                  <span>
+                    PAN:{" "}
+                    {selectedChannel.pan > 0
+                      ? `R${Math.round(selectedChannel.pan * 100)}`
+                      : selectedChannel.pan < 0
+                      ? `L${Math.round(Math.abs(selectedChannel.pan) * 100)}`
+                      : "CENTER"}
+                  </span>
+                </div>
+                <div className="mt-1 flex justify-between font-mono text-[10px] text-zinc-400">
+                  <span>PITCH TUNING:</span>
+                  <span className="text-telemetry-orange">
+                    {selectedChannel.pitchOffset > 0
+                      ? `+${selectedChannel.pitchOffset} st`
+                      : `${selectedChannel.pitchOffset} st`}
+                  </span>
                 </div>
               </div>
 
