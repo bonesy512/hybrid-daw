@@ -18,7 +18,6 @@ pub enum SoundType {
     Clap,
 }
 
-#[derive(Debug, Clone)]
 pub enum AudioCommand {
     Play,
     Stop,
@@ -52,6 +51,38 @@ pub enum AudioCommand {
     },
     PreviewSample(Arc<SampleData>),
     StopPreview,
+    SetMonitorConsumer(Option<Consumer<f32>>),
+    SetMonitorGain(f32),
+}
+
+impl std::fmt::Debug for AudioCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AudioCommand::Play => write!(f, "Play"),
+            AudioCommand::Stop => write!(f, "Stop"),
+            AudioCommand::SetBpm(bpm) => write!(f, "SetBpm({})", bpm),
+            AudioCommand::UpdatePattern { channel_index, .. } => {
+                write!(f, "UpdatePattern(ch: {})", channel_index)
+            }
+            AudioCommand::TriggerVoice { channel_index, velocity } => {
+                write!(f, "TriggerVoice(ch: {}, vel: {})", channel_index, velocity)
+            }
+            AudioCommand::MidiNoteOn { note, velocity, .. } => {
+                write!(f, "MidiNoteOn(note: {}, vel: {})", note, velocity)
+            }
+            AudioCommand::MidiNoteOff { note, .. } => write!(f, "MidiNoteOff({})", note),
+            AudioCommand::AssignChannelSample { channel_index, .. } => {
+                write!(f, "AssignChannelSample(ch: {})", channel_index)
+            }
+            AudioCommand::TriggerSample { channel_index, .. } => {
+                write!(f, "TriggerSample(ch: {})", channel_index)
+            }
+            AudioCommand::PreviewSample(_) => write!(f, "PreviewSample"),
+            AudioCommand::StopPreview => write!(f, "StopPreview"),
+            AudioCommand::SetMonitorConsumer(_) => write!(f, "SetMonitorConsumer"),
+            AudioCommand::SetMonitorGain(g) => write!(f, "SetMonitorGain({})", g),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,6 +246,8 @@ pub struct DspProcessor {
     rng: XorShift32,
     cmd_consumer: Consumer<AudioCommand>,
     midi_consumer: Consumer<AudioCommand>,
+    monitor_consumer: Option<Consumer<f32>>,
+    monitor_gain: f32,
 }
 
 impl DspProcessor {
@@ -268,6 +301,8 @@ impl DspProcessor {
             rng: XorShift32::new(0xda3_1400),
             cmd_consumer,
             midi_consumer,
+            monitor_consumer: None,
+            monitor_gain: 1.0,
         }
     }
 
@@ -385,6 +420,12 @@ impl DspProcessor {
             AudioCommand::StopPreview => {
                 self.preview_voice.stop();
             }
+            AudioCommand::SetMonitorConsumer(consumer) => {
+                self.monitor_consumer = consumer;
+            }
+            AudioCommand::SetMonitorGain(gain) => {
+                self.monitor_gain = gain.clamp(0.0, 4.0);
+            }
         }
     }
 
@@ -453,6 +494,15 @@ impl DspProcessor {
         let (p_left, p_right) = self.preview_voice.process_frame();
         mix_left += p_left;
         mix_right += p_right;
+
+        // Sum live software input monitoring
+        if let Some(ref mut mon) = self.monitor_consumer {
+            if let Ok(mon_s) = mon.pop() {
+                let mon_val = mon_s * self.monitor_gain;
+                mix_left += mon_val;
+                mix_right += mon_val;
+            }
+        }
 
         // Master soft clipping
         let clamped_l = (mix_left * 0.8).clamp(-1.0, 1.0);

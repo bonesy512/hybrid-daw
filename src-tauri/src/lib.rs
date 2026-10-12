@@ -9,9 +9,9 @@ use rtrb::Producer;
 use tauri::Manager;
 
 use crate::audio::{
-    decode_audio_file, ensure_factory_samples, AudioCommand, AudioEngine, BrowserEntry,
-    ChannelSyncData, MidiDeviceDescriptor, MidiManager, ParsedMidiFile, SampleData,
-    SampleMetadata,
+    decode_audio_file, ensure_factory_samples, AudioCommand, AudioDeviceDescriptor, AudioEngine,
+    AudioRecorder, BrowserEntry, ChannelSyncData, MidiDeviceDescriptor, MidiManager,
+    ParsedMidiFile, RecordedClipMetadata, SampleData, SampleMetadata,
 };
 
 pub struct AudioState {
@@ -20,6 +20,7 @@ pub struct AudioState {
     pub stream: Mutex<Option<Stream>>,
     pub midi_manager: MidiManager,
     pub sample_cache: Mutex<HashMap<String, Arc<SampleData>>>,
+    pub recorder: Mutex<AudioRecorder>,
 }
 
 // In CPAL on Windows, Stream contains !Send raw COM handles, but holding it
@@ -293,6 +294,63 @@ fn list_browser_directory(dir_path: Option<String>) -> Result<Vec<BrowserEntry>,
     Ok(dirs)
 }
 
+#[tauri::command]
+fn get_audio_input_devices() -> Vec<AudioDeviceDescriptor> {
+    AudioRecorder::list_input_devices()
+}
+
+#[tauri::command]
+fn start_recording(
+    track_id: String,
+    track_index: usize,
+    state: tauri::State<'_, AudioState>,
+) -> Result<String, String> {
+    let (mon_prod, mon_cons) = rtrb::RingBuffer::<f32>::new(16384);
+
+    // Pass monitor consumer to audio engine for software monitoring
+    if let Ok(mut prod_guard) = state.producer.lock() {
+        if let Some(ref mut prod) = *prod_guard {
+            let _ = prod.push(AudioCommand::SetMonitorConsumer(Some(mon_cons)));
+        }
+    }
+
+    let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
+    recorder.start_recording(track_id, track_index, Some(mon_prod))
+}
+
+#[tauri::command]
+fn stop_recording(
+    state: tauri::State<'_, AudioState>,
+) -> Result<RecordedClipMetadata, String> {
+    // Detach monitor consumer from audio engine
+    if let Ok(mut prod_guard) = state.producer.lock() {
+        if let Some(ref mut prod) = *prod_guard {
+            let _ = prod.push(AudioCommand::SetMonitorConsumer(None));
+        }
+    }
+
+    let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
+    recorder.stop_recording()
+}
+
+#[tauri::command]
+fn get_recording_peak_level(
+    state: tauri::State<'_, AudioState>,
+) -> Result<f32, String> {
+    let recorder = state.recorder.lock().map_err(|e| e.to_string())?;
+    Ok(recorder.get_peak_level())
+}
+
+#[tauri::command]
+fn set_recording_monitoring(
+    enabled: bool,
+    state: tauri::State<'_, AudioState>,
+) -> Result<(), String> {
+    let recorder = state.recorder.lock().map_err(|e| e.to_string())?;
+    recorder.set_monitoring(enabled);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -329,6 +387,7 @@ pub fn run() {
                 stream: Mutex::new(initial_stream),
                 midi_manager,
                 sample_cache: Mutex::new(HashMap::new()),
+                recorder: Mutex::new(AudioRecorder::new()),
             });
 
             Ok(())
@@ -348,7 +407,12 @@ pub fn run() {
             preview_sample,
             stop_preview,
             assign_channel_sample,
-            list_browser_directory
+            list_browser_directory,
+            get_audio_input_devices,
+            start_recording,
+            stop_recording,
+            get_recording_peak_level,
+            set_recording_monitoring
         ])
         .run(tauri::generate_context!())
         .expect("error while building tauri application");

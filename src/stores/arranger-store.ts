@@ -1,4 +1,10 @@
 import { create } from "zustand";
+import {
+  startRecording,
+  stopRecording,
+  type RecordedClipMetadata,
+} from "@/lib/audio/tauri-bridge";
+import { useTransportStore } from "@/stores/transport-store";
 
 export type SnapGrid = "bar" | "1/2" | "1/4" | "1/8" | "1/16" | "off";
 export type ArrangerTool = "pointer" | "pencil" | "scissors" | "eraser" | "mute";
@@ -42,16 +48,23 @@ export interface ArrangerState {
   totalBars: number;
   tracks: ArrangerTrack[];
   clips: TimelineClip[];
+  isRecordingActive: boolean;
+  recordingStartBar: number;
+  activeRecordingTrackId: string | null;
 }
 
 export interface ArrangerActions {
   setZoomX: (zoom: number) => void;
   setScrollX: (scroll: number) => void;
-  setScrollY: (scroll: number) => void;
+  setScrollY: (scrollY: number) => void;
   setSnapGrid: (snap: SnapGrid) => void;
   setActiveTool: (tool: ArrangerTool) => void;
   setLoopRange: (start: number, end: number) => void;
   setTotalBars: (bars: number) => void;
+
+  // Recording actions
+  startRecordingSession: () => Promise<string | null>;
+  stopRecordingSession: () => Promise<TimelineClip | null>;
 
   // Track actions
   addTrack: (name?: string, type?: "audio" | "instrument", color?: string) => void;
@@ -289,6 +302,114 @@ export const useArrangerStore = create<ArrangerStore>()((set, get) => ({
   totalBars: 32,
   tracks: DEFAULT_TRACKS,
   clips: DEFAULT_CLIPS,
+  isRecordingActive: false,
+  recordingStartBar: 1,
+  activeRecordingTrackId: null,
+
+  startRecordingSession: async () => {
+    const state = get();
+    if (state.isRecordingActive) return null;
+
+    // Identify armed tracks, or arm the first audio track
+    let armedTrack = state.tracks.find((t) => t.isArmed);
+    if (!armedTrack) {
+      const target = state.tracks.find((t) => t.type === "audio") || state.tracks[0];
+      if (target) {
+        state.toggleTrackArm(target.id);
+        armedTrack = target;
+      }
+    }
+
+    if (!armedTrack) return null;
+
+    const trackIndex = state.tracks.findIndex((t) => t.id === armedTrack.id);
+    const transportState = useTransportStore.getState();
+    const currentStartBar = Math.max(
+      1,
+      transportState.position.bars +
+        (transportState.position.beats - 1) / 4 +
+        transportState.position.ticks / (4 * 240)
+    );
+
+    try {
+      const filePath = await startRecording(armedTrack.id, Math.max(0, trackIndex));
+      set({
+        isRecordingActive: true,
+        recordingStartBar: currentStartBar,
+        activeRecordingTrackId: armedTrack.id,
+      });
+      return filePath;
+    } catch (err) {
+      console.error("[ArrangerStore] startRecording error:", err);
+      return null;
+    }
+  },
+
+  stopRecordingSession: async () => {
+    const state = get();
+    if (!state.isRecordingActive) return null;
+
+    try {
+      const meta = await stopRecording();
+      const transportState = useTransportStore.getState();
+      const currentEndBar = Math.max(
+        state.recordingStartBar + 0.25,
+        transportState.position.bars +
+          (transportState.position.beats - 1) / 4 +
+          transportState.position.ticks / (4 * 240)
+      );
+
+      const bpm = transportState.bpm || 140;
+      const secondsPerBar = (60 / bpm) * 4;
+      const computedBars = meta.duration_seconds
+        ? meta.duration_seconds / secondsPerBar
+        : currentEndBar - state.recordingStartBar;
+      const durationBars = Math.max(0.25, Number(computedBars.toFixed(3)));
+
+      const targetTrackId =
+        state.activeRecordingTrackId ||
+        state.tracks.find((t) => t.isArmed)?.id ||
+        state.tracks[0]?.id ||
+        "track-audio-1";
+
+      const clipId = `rec-${Date.now()}`;
+      const newClip: TimelineClip = {
+        id: clipId,
+        trackId: targetTrackId,
+        name: meta.filename || `Take ${new Date().toLocaleTimeString()}`,
+        type: "audio",
+        sourceId: meta.file_path,
+        startBar: snapToGrid(
+          state.recordingStartBar,
+          state.snapGrid === "off" ? "1/16" : state.snapGrid
+        ),
+        durationBars,
+        offsetBars: 0,
+        color: "#ff2200", // Recording Crimson
+        isSelected: true,
+        isMuted: false,
+        waveformPeaks:
+          meta.waveform_peaks && meta.waveform_peaks.length > 0
+            ? meta.waveform_peaks
+            : Array.from({ length: 64 }, () => Math.random() * 0.8),
+      };
+
+      set((s) => ({
+        isRecordingActive: false,
+        activeRecordingTrackId: null,
+        clips: [...s.clips.map((c) => ({ ...c, isSelected: false })), newClip],
+      }));
+
+      return newClip;
+    } catch (err) {
+      console.error("[ArrangerStore] stopRecording error:", err);
+      set({
+        isRecordingActive: false,
+        activeRecordingTrackId: null,
+      });
+      return null;
+    }
+  },
 
   setZoomX: (zoom) => set({ zoomX: Math.max(30, Math.min(240, zoom)) }),
   setScrollX: (scrollX) => set({ scrollX }),

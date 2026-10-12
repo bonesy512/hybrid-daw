@@ -38,6 +38,9 @@ export const ArrangerTimeline: React.FC<ArrangerTimelineProps> = ({
   const snapGrid = useArrangerStore((s) => s.snapGrid);
   const activeTool = useArrangerStore((s) => s.activeTool);
   const totalBars = useArrangerStore((s) => s.totalBars);
+  const isRecordingActive = useArrangerStore((s) => s.isRecordingActive);
+  const recordingStartBar = useArrangerStore((s) => s.recordingStartBar);
+  const activeRecordingTrackId = useArrangerStore((s) => s.activeRecordingTrackId);
 
   const addClip = useArrangerStore((s) => s.addClip);
   const removeClip = useArrangerStore((s) => s.removeClip);
@@ -255,16 +258,32 @@ export const ArrangerTimeline: React.FC<ArrangerTimelineProps> = ({
                   style={{ width: `${HEADER_WIDTH}px` }}
                   className="sticky left-0 z-20 flex h-full items-center justify-between border-r border-[#27272A] bg-[#0d0d12] px-2.5 shadow-[2px_0_5px_rgba(0,0,0,0.6)]"
                 >
-                  {/* Color Beacon & Name */}
+                  {/* Color Beacon & Name & Armed REC Tally */}
                   <div className="flex items-center gap-2 truncate pr-2">
                     <div
                       className="h-8 w-1 shrink-0 rounded-full shadow-[0_0_8px_currentColor]"
                       style={{ backgroundColor: track.color, color: track.color }}
                     />
                     <div className="flex flex-col truncate">
-                      <span className="truncate text-xs font-bold text-zinc-200">
-                        {track.name}
-                      </span>
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="truncate text-xs font-bold text-zinc-200">
+                          {track.name}
+                        </span>
+                        {track.isArmed && (
+                          <span
+                            className={cn(
+                              "inline-flex items-center gap-1 rounded-[2px] px-1 py-0.2 font-mono text-[8px] font-black uppercase tracking-wider transition-all",
+                              isRecordingActive && activeRecordingTrackId === track.id
+                                ? "border border-red-500 bg-red-900 text-white animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.7)]"
+                                : "border border-red-500/60 bg-red-950/80 text-red-400 animate-[pulse_2s_cubic-bezier(0.4,0,0.6,1)_infinite]"
+                            )}
+                            title="Track Record Armed"
+                          >
+                            <span className="size-1.5 rounded-full bg-red-500 animate-ping" />
+                            ● REC
+                          </span>
+                        )}
+                      </div>
                       <span className="text-[8px] text-zinc-500 uppercase">
                         {track.type}
                       </span>
@@ -354,6 +373,23 @@ export const ArrangerTimeline: React.FC<ArrangerTimelineProps> = ({
                     />
                   )}
 
+                  {/* ── Active Live Recording Bounds Box (Follows Playhead Sweep) ── */}
+                  {isRecordingActive && activeRecordingTrackId === track.id && (
+                    <div
+                      style={{
+                        left: `${(recordingStartBar - 1) * zoomX}px`,
+                        width: `${Math.max(16, (playheadBar - recordingStartBar) * zoomX)}px`,
+                      }}
+                      className="pointer-events-none absolute top-1 bottom-1 z-30 flex items-center overflow-hidden rounded-[2px] border-2 border-red-500 bg-red-950/40 shadow-[0_0_16px_rgba(239,68,68,0.5)] backdrop-blur-xs"
+                    >
+                      <div className="absolute inset-0 bg-[repeating-linear-gradient(45deg,rgba(239,68,68,0.2),rgba(239,68,68,0.2)_10px,transparent_10px,transparent_20px)] animate-[pulse_1.5s_ease-in-out_infinite]" />
+                      <div className="relative flex items-center gap-1.5 px-2 font-mono text-[9px] font-black tracking-widest text-red-200 uppercase drop-shadow">
+                        <span className="size-2 rounded-full bg-red-500 animate-ping" />
+                        <span>REC LIVE PCM</span>
+                      </div>
+                    </div>
+                  )}
+
                   {/* ── Clips inside this track ── */}
                   {trackClips.map((clip) => {
                     const clipLeft = (clip.startBar - 1) * zoomX;
@@ -400,21 +436,22 @@ export const ArrangerTimeline: React.FC<ArrangerTimelineProps> = ({
                         {/* ── Clip Body: Waveform or Step Pattern Visualization ── */}
                         <div className="relative flex flex-1 items-center px-1 overflow-hidden">
                           {clip.type === "audio" ? (
-                            /* Audio Waveform SVG Bars */
-                            <div className="flex h-full w-full items-center gap-[1px]">
-                              {(clip.waveformPeaks || [0.4, 0.7, 0.5, 0.9, 0.3, 0.6, 0.8]).map(
-                                (peak, pIdx) => (
-                                  <div
-                                    key={pIdx}
-                                    className="w-[2px] rounded-xs"
-                                    style={{
-                                      height: `${Math.max(15, Math.round(peak * 90))}%`,
-                                      backgroundColor: clip.color,
-                                      opacity: 0.85,
-                                    }}
-                                  />
-                                )
-                              )}
+                            /* Audio Waveform Responsive Peak Bars */
+                            <div className="flex h-full w-full items-center justify-between gap-[1px] py-1">
+                              {(clip.waveformPeaks && clip.waveformPeaks.length > 0
+                                ? clip.waveformPeaks
+                                : [0.4, 0.7, 0.5, 0.9, 0.3, 0.6, 0.8, 0.5, 0.3, 0.7]
+                              ).map((peak, pIdx) => (
+                                <div
+                                  key={pIdx}
+                                  className="flex-1 min-w-[1px] max-w-[4px] rounded-xs transition-all"
+                                  style={{
+                                    height: `${Math.max(12, Math.round(peak * 90))}%`,
+                                    backgroundColor: clip.color,
+                                    opacity: 0.9,
+                                  }}
+                                />
+                              ))}
                             </div>
                           ) : (
                             /* Pattern Step Matrix Preview Dots */

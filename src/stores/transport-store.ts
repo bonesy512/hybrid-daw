@@ -5,6 +5,7 @@ import {
   setTempo,
   startAudio,
 } from "@/lib/audio/tauri-bridge";
+import { useArrangerStore } from "@/stores/arranger-store";
 
 export interface Position {
   bars: number;
@@ -50,7 +51,7 @@ const DEFAULT_POSITION: Position = {
  * or Canvas, but discrete transport state, tempo, and song cursor coordinate
  * are managed here for the UI shell.
  */
-export const useTransportStore = create<TransportStore>()((set) => ({
+export const useTransportStore = create<TransportStore>()((set, get) => ({
   isPlaying: false,
   isRecording: false,
   isLooping: true,
@@ -65,8 +66,14 @@ export const useTransportStore = create<TransportStore>()((set) => ({
       if (nextPlaying) {
         startAudio().catch(() => {});
         playTransport().catch(() => {});
+        if (state.isRecording) {
+          useArrangerStore.getState().startRecordingSession().catch(() => {});
+        }
       } else {
         stopTransport().catch(() => {});
+        if (useArrangerStore.getState().isRecordingActive) {
+          useArrangerStore.getState().stopRecordingSession().catch(() => {});
+        }
       }
       return {
         isPlaying: nextPlaying,
@@ -76,6 +83,9 @@ export const useTransportStore = create<TransportStore>()((set) => ({
   play: () => {
     startAudio().catch(() => {});
     playTransport().catch(() => {});
+    if (get().isRecording) {
+      useArrangerStore.getState().startRecordingSession().catch(() => {});
+    }
     set(() => ({
       isPlaying: true,
     }));
@@ -83,6 +93,9 @@ export const useTransportStore = create<TransportStore>()((set) => ({
 
   pause: () => {
     stopTransport().catch(() => {});
+    if (useArrangerStore.getState().isRecordingActive) {
+      useArrangerStore.getState().stopRecordingSession().catch(() => {});
+    }
     set(() => ({
       isPlaying: false,
     }));
@@ -90,6 +103,9 @@ export const useTransportStore = create<TransportStore>()((set) => ({
 
   stop: () => {
     stopTransport().catch(() => {});
+    if (useArrangerStore.getState().isRecordingActive) {
+      useArrangerStore.getState().stopRecordingSession().catch(() => {});
+    }
     set((state) => {
       // If already stopped, pressing stop resets transport position to beginning
       if (!state.isPlaying && !state.isRecording) {
@@ -105,9 +121,19 @@ export const useTransportStore = create<TransportStore>()((set) => ({
   },
 
   toggleRecord: () =>
-    set((state) => ({
-      isRecording: !state.isRecording,
-    })),
+    set((state) => {
+      const nextRecording = !state.isRecording;
+      if (state.isPlaying) {
+        if (nextRecording) {
+          useArrangerStore.getState().startRecordingSession().catch(() => {});
+        } else if (useArrangerStore.getState().isRecordingActive) {
+          useArrangerStore.getState().stopRecordingSession().catch(() => {});
+        }
+      }
+      return {
+        isRecording: nextRecording,
+      };
+    }),
 
   toggleLoop: () =>
     set((state) => ({

@@ -483,3 +483,120 @@ export async function listBrowserDirectory(
   return await invoke<BrowserEntry[]>("list_browser_directory", { dirPath });
 }
 
+export interface AudioDeviceDescriptor {
+  id: string;
+  name: string;
+  is_default: boolean;
+}
+
+export interface RecordedClipMetadata {
+  file_path: string;
+  filename: string;
+  duration_seconds: number;
+  sample_rate: number;
+  channels: number;
+  waveform_peaks: number[];
+  track_id: string;
+  track_index: number;
+}
+
+/**
+ * Enumerates available audio input devices (microphones and line-in ports).
+ */
+export async function getAudioInputDevices(): Promise<AudioDeviceDescriptor[]> {
+  if (!isTauriEnvironment()) {
+    return [
+      {
+        id: "web-audio-input",
+        name: "Default Microphone (WASAPI Emulated)",
+        is_default: true,
+      },
+      {
+        id: "line-in-2",
+        name: "Line In 1/2 (Audio Interface)",
+        is_default: false,
+      },
+    ];
+  }
+  try {
+    return await invoke<AudioDeviceDescriptor[]>("get_audio_input_devices");
+  } catch (err) {
+    console.warn("[AudioBridge] invoke('get_audio_input_devices') error:", err);
+    return [
+      {
+        id: "default-input",
+        name: "Default Microphone / Line In",
+        is_default: true,
+      },
+    ];
+  }
+}
+
+/**
+ * Arms and starts hardware audio recording on the specified track.
+ */
+export async function startRecording(
+  trackId: string,
+  trackIndex: number
+): Promise<string> {
+  if (!isTauriEnvironment()) {
+    console.log(
+      `[AudioBridge] Web Audio fallback recording started for track ${trackId} (index ${trackIndex})`
+    );
+    return `recordings/rec_${trackId}_${Date.now()}.wav`;
+  }
+  return await invoke<string>("start_recording", { trackId, trackIndex });
+}
+
+/**
+ * Finalizes writing the recorded WAV file, computes normalized peaks, and returns clip metadata.
+ */
+export async function stopRecording(): Promise<RecordedClipMetadata> {
+  if (!isTauriEnvironment()) {
+    console.log("[AudioBridge] Web Audio fallback recording stopped");
+    const peaks = Array.from({ length: 64 }, (_, i) => {
+      const envelope = Math.sin((i / 64) * Math.PI);
+      const noise = (Math.random() - 0.5) * 0.3;
+      return Math.max(0.05, Math.min(1.0, envelope * 0.8 + noise));
+    });
+
+    return {
+      file_path: "recordings/browser_take_1.wav",
+      filename: "rec_live_take_1.wav",
+      duration_seconds: 4.0,
+      sample_rate: 44100,
+      channels: 2,
+      waveform_peaks: peaks,
+      track_id: "audio-1",
+      track_index: 0,
+    };
+  }
+  return await invoke<RecordedClipMetadata>("stop_recording");
+}
+
+/**
+ * Returns current real-time peak audio level from the active recording stream.
+ */
+export async function getRecordingPeakLevel(): Promise<number> {
+  if (!isTauriEnvironment()) {
+    return Math.random() * 0.35;
+  }
+  try {
+    return await invoke<number>("get_recording_peak_level");
+  } catch {
+    return 0.0;
+  }
+}
+
+/**
+ * Enables or disables software input monitoring through headphones/speakers.
+ */
+export async function setRecordingMonitoring(enabled: boolean): Promise<void> {
+  if (!isTauriEnvironment()) return;
+  try {
+    await invoke("set_recording_monitoring", { enabled });
+  } catch (err) {
+    console.warn("[AudioBridge] invoke('set_recording_monitoring') error:", err);
+  }
+}
+
