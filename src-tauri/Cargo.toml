@@ -15,7 +15,7 @@ name = "hybrid_daw_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.7.2" }
+tauri-build = { version = "2.7.2", features = [] }
 
 [dependencies]
 cpal = "0.15"
@@ -28,5 +28,5 @@ hound = "3.5"
 symphonia = { version = "0.5", features = ["all"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 log = "0.4"
-tauri = { version = "2.12.3" }
+tauri = { version = "2.12.3", features = [] }
 tauri-plugin-log = "2"

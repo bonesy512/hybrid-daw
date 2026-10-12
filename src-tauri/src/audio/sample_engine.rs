@@ -152,7 +152,7 @@ impl SamplePlaybackVoice {
 
 /// Pre-allocated pool of 32 sample playback voices with voice-stealing.
 pub struct VoicePool {
-    voices: [SamplePlaybackVoice; VOICE_POOL_SIZE],
+    voices: Box<[SamplePlaybackVoice; VOICE_POOL_SIZE]>,
 }
 
 impl Default for VoicePool {
@@ -163,9 +163,16 @@ impl Default for VoicePool {
 
 impl VoicePool {
     pub fn new() -> Self {
-        Self {
-            voices: std::array::from_fn(|_| SamplePlaybackVoice::new()),
-        }
+        let voices: Box<[SamplePlaybackVoice; VOICE_POOL_SIZE]> = {
+            let mut vec = Vec::with_capacity(VOICE_POOL_SIZE);
+            for _ in 0..VOICE_POOL_SIZE {
+                vec.push(SamplePlaybackVoice::new());
+            }
+            vec.into_boxed_slice()
+                .try_into()
+                .unwrap_or_else(|_| panic!("voice pool size mismatch"))
+        };
+        Self { voices }
     }
 
     /// Allocate or steal a voice and trigger sample playback.

@@ -728,7 +728,7 @@ pub struct PolySynth {
     sample_rate: f32,
     params: SynthParams,
     active_params: SynthParams, // Interpolated after Transform Pad
-    voices: [SynthVoice; POLYPHONY_VOICES],
+    voices: Box<[SynthVoice; POLYPHONY_VOICES]>,
     active_voices_atomic: Arc<AtomicU32>,
     lfo_phase: f32,
     lfo_sh_val: f32,
@@ -743,11 +743,20 @@ impl PolySynth {
 
     pub fn new_with_meter(sample_rate: f32, active_voices_atomic: Arc<AtomicU32>) -> Self {
         let params = SynthParams::default();
+        let voices: Box<[SynthVoice; POLYPHONY_VOICES]> = {
+            let mut vec = Vec::with_capacity(POLYPHONY_VOICES);
+            for _ in 0..POLYPHONY_VOICES {
+                vec.push(SynthVoice::default());
+            }
+            vec.into_boxed_slice()
+                .try_into()
+                .unwrap_or_else(|_| panic!("polyphony voice size mismatch"))
+        };
         let mut synth = Self {
             sample_rate,
             params: params.clone(),
             active_params: params,
-            voices: [SynthVoice::default(); POLYPHONY_VOICES],
+            voices,
             active_voices_atomic,
             lfo_phase: 0.0,
             lfo_sh_val: 0.0,

@@ -45,6 +45,7 @@ target/
 src-tauri/target/
 src-tauri/gen/schemas/
 src-tauri/WixTools/
+src-tauri/samples/
 
 # ── Editors / IDEs ───────────────────────────────────────────
 .vscode/*

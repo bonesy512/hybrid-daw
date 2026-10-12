@@ -418,59 +418,96 @@ impl EqBandFilter {
 /// Uses precomputed twiddle factors and Hann window with zero allocations during processing.
 pub struct FftAnalyzer {
     sample_rate: f32,
-    input_buffer: [f32; FFT_SIZE],
+    input_buffer: Box<[f32; FFT_SIZE]>,
     buffer_idx: usize,
     hop_counter: usize,
-    hann_window: [f32; FFT_SIZE],
-    bit_rev: [u16; FFT_SIZE],
-    twiddle_cos: [f32; FFT_SIZE / 2],
-    twiddle_sin: [f32; FFT_SIZE / 2],
-    scratch_re: [f32; FFT_SIZE],
-    scratch_im: [f32; FFT_SIZE],
+    hann_window: Box<[f32; FFT_SIZE]>,
+    bit_rev: Box<[u16; FFT_SIZE]>,
+    twiddle_cos: Box<[f32; FFT_SIZE / 2]>,
+    twiddle_sin: Box<[f32; FFT_SIZE / 2]>,
+    scratch_re: Box<[f32; FFT_SIZE]>,
+    scratch_im: Box<[f32; FFT_SIZE]>,
     current_decay: [f32; SPECTRUM_BINS],
     spectrum_peaks: Arc<[AtomicU32; SPECTRUM_BINS]>,
 }
 
 impl FftAnalyzer {
     pub fn new(sample_rate: f32, spectrum_peaks: Arc<[AtomicU32; SPECTRUM_BINS]>) -> Self {
-        // Precompute Hann window
-        let mut hann_window = [0.0f32; FFT_SIZE];
-        for i in 0..FFT_SIZE {
-            hann_window[i] = 0.5 * (1.0 - (2.0 * PI * i as f32 / (FFT_SIZE as f32 - 1.0)).cos());
-        }
+        // Precompute Hann window directly on the heap
+        let hann_window: Box<[f32; FFT_SIZE]> = {
+            let mut vec = vec![0.0f32; FFT_SIZE];
+            for i in 0..FFT_SIZE {
+                vec[i] = 0.5 * (1.0 - (2.0 * PI * i as f32 / (FFT_SIZE as f32 - 1.0)).cos());
+            }
+            vec.into_boxed_slice()
+                .try_into()
+                .unwrap_or_else(|_| panic!("hann window size mismatch"))
+        };
 
         // Precompute bit reversal permutation for 1024 points (10 bits)
-        let mut bit_rev = [0u16; FFT_SIZE];
-        for i in 0..FFT_SIZE {
-            let mut rev = 0u16;
-            let mut temp = i;
-            for _ in 0..10 {
-                rev = (rev << 1) | (temp as u16 & 1);
-                temp >>= 1;
+        let bit_rev: Box<[u16; FFT_SIZE]> = {
+            let mut vec = vec![0u16; FFT_SIZE];
+            for i in 0..FFT_SIZE {
+                let mut rev = 0u16;
+                let mut temp = i;
+                for _ in 0..10 {
+                    rev = (rev << 1) | (temp as u16 & 1);
+                    temp >>= 1;
+                }
+                vec[i] = rev;
             }
-            bit_rev[i] = rev;
-        }
+            vec.into_boxed_slice()
+                .try_into()
+                .unwrap_or_else(|_| panic!("bit rev size mismatch"))
+        };
 
         // Precompute twiddle factors: exp(-2*pi*i*k / N)
-        let mut twiddle_cos = [0.0f32; FFT_SIZE / 2];
-        let mut twiddle_sin = [0.0f32; FFT_SIZE / 2];
-        for k in 0..(FFT_SIZE / 2) {
-            let theta = -2.0 * PI * (k as f32) / (FFT_SIZE as f32);
-            twiddle_cos[k] = theta.cos();
-            twiddle_sin[k] = theta.sin();
-        }
+        let twiddle_cos: Box<[f32; FFT_SIZE / 2]> = {
+            let mut vec = vec![0.0f32; FFT_SIZE / 2];
+            for k in 0..(FFT_SIZE / 2) {
+                let theta = -2.0 * PI * (k as f32) / (FFT_SIZE as f32);
+                vec[k] = theta.cos();
+            }
+            vec.into_boxed_slice()
+                .try_into()
+                .unwrap_or_else(|_| panic!("twiddle cos size mismatch"))
+        };
+
+        let twiddle_sin: Box<[f32; FFT_SIZE / 2]> = {
+            let mut vec = vec![0.0f32; FFT_SIZE / 2];
+            for k in 0..(FFT_SIZE / 2) {
+                let theta = -2.0 * PI * (k as f32) / (FFT_SIZE as f32);
+                vec[k] = theta.sin();
+            }
+            vec.into_boxed_slice()
+                .try_into()
+                .unwrap_or_else(|_| panic!("twiddle sin size mismatch"))
+        };
+
+        let input_buffer: Box<[f32; FFT_SIZE]> = vec![0.0f32; FFT_SIZE]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap_or_else(|_| panic!("input buffer size mismatch"));
+        let scratch_re: Box<[f32; FFT_SIZE]> = vec![0.0f32; FFT_SIZE]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap_or_else(|_| panic!("scratch re size mismatch"));
+        let scratch_im: Box<[f32; FFT_SIZE]> = vec![0.0f32; FFT_SIZE]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap_or_else(|_| panic!("scratch im size mismatch"));
 
         Self {
             sample_rate,
-            input_buffer: [0.0; FFT_SIZE],
+            input_buffer,
             buffer_idx: 0,
             hop_counter: 0,
             hann_window,
             bit_rev,
             twiddle_cos,
             twiddle_sin,
-            scratch_re: [0.0; FFT_SIZE],
-            scratch_im: [0.0; FFT_SIZE],
+            scratch_re,
+            scratch_im,
             current_decay: [0.0; SPECTRUM_BINS],
             spectrum_peaks,
         }
@@ -577,7 +614,7 @@ pub struct Equalizer {
     params: EqualizerParams,
     bands: [EqBandFilter; 8],
     output_gain_lin: f32,
-    fft_analyzer: FftAnalyzer,
+    fft_analyzer: Box<FftAnalyzer>,
 }
 
 impl Equalizer {
@@ -603,7 +640,7 @@ impl Equalizer {
         ];
 
         let output_gain_lin = 10.0f32.powf(params.output_gain_db / 20.0);
-        let fft_analyzer = FftAnalyzer::new(sample_rate, spectrum_peaks);
+        let fft_analyzer = Box::new(FftAnalyzer::new(sample_rate, spectrum_peaks));
 
         Self {
             sample_rate,

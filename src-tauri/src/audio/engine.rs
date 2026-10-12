@@ -293,15 +293,15 @@ pub struct DspProcessor {
     samples_per_step: usize,
     sample_counter: usize,
     current_step: usize,
-    voices: [PercussionVoice; MAX_CHANNELS],
-    channel_samples: [Option<Arc<SampleData>>; MAX_CHANNELS],
-    sample_voices: VoicePool,
-    preview_voice: SamplePlaybackVoice,
-    channel_equalizers: [Equalizer; MAX_CHANNELS],
-    master_equalizer: Equalizer,
-    channel_compressors: [Compressor; MAX_CHANNELS],
-    master_compressor: Compressor,
-    channel_synths: [PolySynth; MAX_CHANNELS],
+    voices: Box<[PercussionVoice; MAX_CHANNELS]>,
+    channel_samples: Box<[Option<Arc<SampleData>>; MAX_CHANNELS]>,
+    sample_voices: Box<VoicePool>,
+    preview_voice: Box<SamplePlaybackVoice>,
+    channel_equalizers: Box<[Equalizer; MAX_CHANNELS]>,
+    master_equalizer: Box<Equalizer>,
+    channel_compressors: Box<[Compressor; MAX_CHANNELS]>,
+    master_compressor: Box<Compressor>,
+    channel_synths: Box<[PolySynth; MAX_CHANNELS]>,
     rng: XorShift32,
     cmd_consumer: Consumer<AudioCommand>,
     midi_consumer: Consumer<AudioCommand>,
@@ -321,49 +321,76 @@ impl DspProcessor {
         let initial_bpm = 140.0;
         let samples_per_step = ((sample_rate as f64 * 60.0) / (initial_bpm * 4.0)).round() as usize;
 
-        let mut voices = [
-            PercussionVoice::new(SoundType::Kick, [false; STEP_COUNT]),
-            PercussionVoice::new(SoundType::Clap, [false; STEP_COUNT]),
-            PercussionVoice::new(SoundType::HiHat, [false; STEP_COUNT]),
-            PercussionVoice::new(SoundType::Snare, [false; STEP_COUNT]),
-            PercussionVoice::new(SoundType::Kick, [false; STEP_COUNT]),
-            PercussionVoice::new(SoundType::Clap, [false; STEP_COUNT]),
-            PercussionVoice::new(SoundType::HiHat, [false; STEP_COUNT]),
-            PercussionVoice::new(SoundType::Snare, [false; STEP_COUNT]),
-        ];
+        let voices: Box<[PercussionVoice; MAX_CHANNELS]> = {
+            let mut vec = Vec::with_capacity(MAX_CHANNELS);
+            vec.push(PercussionVoice::new(SoundType::Kick, [false; STEP_COUNT]));
+            vec.push(PercussionVoice::new(SoundType::Clap, [false; STEP_COUNT]));
+            vec.push(PercussionVoice::new(SoundType::HiHat, [false; STEP_COUNT]));
+            vec.push(PercussionVoice::new(SoundType::Snare, [false; STEP_COUNT]));
+            vec.push(PercussionVoice::new(SoundType::Kick, [false; STEP_COUNT]));
+            vec.push(PercussionVoice::new(SoundType::Clap, [false; STEP_COUNT]));
+            vec.push(PercussionVoice::new(SoundType::HiHat, [false; STEP_COUNT]));
+            vec.push(PercussionVoice::new(SoundType::Snare, [false; STEP_COUNT]));
+            vec[0].steps[0] = true;
+            vec[0].steps[8] = true;
+            vec[1].steps[4] = true;
+            vec[1].steps[12] = true;
+            for i in (0..16).step_by(2) {
+                vec[2].steps[i] = true;
+            }
+            vec[3].steps[12] = true;
+            vec.into_boxed_slice()
+                .try_into()
+                .unwrap_or_else(|_| panic!("voices size mismatch"))
+        };
 
-        // Default initial patterns matching frontend defaults:
-        // Kick (0, 8)
-        voices[0].steps[0] = true;
-        voices[0].steps[8] = true;
+        let channel_equalizers: Box<[Equalizer; MAX_CHANNELS]> = {
+            let mut vec = Vec::with_capacity(MAX_CHANNELS);
+            for i in 0..MAX_CHANNELS {
+                vec.push(Equalizer::new_with_spectrum(sample_rate, Arc::clone(&spectrum_atomics[i])));
+            }
+            vec.into_boxed_slice()
+                .try_into()
+                .unwrap_or_else(|_| panic!("channel equalizers size mismatch"))
+        };
+        let master_equalizer = Box::new(Equalizer::new_with_spectrum(
+            sample_rate,
+            Arc::clone(&spectrum_atomics[MAX_CHANNELS]),
+        ));
 
-        // Clap (4, 12)
-        voices[1].steps[4] = true;
-        voices[1].steps[12] = true;
+        let channel_compressors: Box<[Compressor; MAX_CHANNELS]> = {
+            let mut vec = Vec::with_capacity(MAX_CHANNELS);
+            for i in 0..MAX_CHANNELS {
+                vec.push(Compressor::new_with_meter(sample_rate, Arc::clone(&meter_atomics[i])));
+            }
+            vec.into_boxed_slice()
+                .try_into()
+                .unwrap_or_else(|_| panic!("channel compressors size mismatch"))
+        };
+        let master_compressor = Box::new(Compressor::new_with_meter(
+            sample_rate,
+            Arc::clone(&meter_atomics[MAX_CHANNELS]),
+        ));
 
-        // HiHat (0, 2, 4, 6, 8, 10, 12, 14)
-        for i in (0..16).step_by(2) {
-            voices[2].steps[i] = true;
-        }
+        let channel_synths: Box<[PolySynth; MAX_CHANNELS]> = {
+            let mut vec = Vec::with_capacity(MAX_CHANNELS);
+            for i in 0..MAX_CHANNELS {
+                vec.push(PolySynth::new_with_meter(sample_rate, Arc::clone(&synth_voice_atomics[i])));
+            }
+            vec.into_boxed_slice()
+                .try_into()
+                .unwrap_or_else(|_| panic!("channel synths size mismatch"))
+        };
 
-        // Snare (12)
-        voices[3].steps[12] = true;
-
-        let channel_equalizers = std::array::from_fn(|i| {
-            Equalizer::new_with_spectrum(sample_rate, Arc::clone(&spectrum_atomics[i]))
-        });
-        let master_equalizer =
-            Equalizer::new_with_spectrum(sample_rate, Arc::clone(&spectrum_atomics[MAX_CHANNELS]));
-
-        let channel_compressors = std::array::from_fn(|i| {
-            Compressor::new_with_meter(sample_rate, Arc::clone(&meter_atomics[i]))
-        });
-        let master_compressor =
-            Compressor::new_with_meter(sample_rate, Arc::clone(&meter_atomics[MAX_CHANNELS]));
-
-        let channel_synths = std::array::from_fn(|i| {
-            PolySynth::new_with_meter(sample_rate, Arc::clone(&synth_voice_atomics[i]))
-        });
+        let channel_samples: Box<[Option<Arc<SampleData>>; MAX_CHANNELS]> = {
+            let mut vec = Vec::with_capacity(MAX_CHANNELS);
+            for _ in 0..MAX_CHANNELS {
+                vec.push(None);
+            }
+            vec.into_boxed_slice()
+                .try_into()
+                .unwrap_or_else(|_| panic!("channel samples size mismatch"))
+        };
 
         Self {
             sample_rate,
@@ -373,9 +400,9 @@ impl DspProcessor {
             sample_counter: 0,
             current_step: 0,
             voices,
-            channel_samples: std::array::from_fn(|_| None),
-            sample_voices: VoicePool::new(),
-            preview_voice: SamplePlaybackVoice::new(),
+            channel_samples,
+            sample_voices: Box::new(VoicePool::new()),
+            preview_voice: Box::new(SamplePlaybackVoice::new()),
             channel_equalizers,
             master_equalizer,
             channel_compressors,
@@ -699,14 +726,14 @@ impl AudioEngine {
         // 256-command lock-free ringbuffer for UI commands, 512 for MIDI hardware events
         let (cmd_producer, cmd_consumer) = RingBuffer::<AudioCommand>::new(256);
         let (midi_producer, midi_consumer) = RingBuffer::<AudioCommand>::new(512);
-        let mut dsp = DspProcessor::new(
+        let mut dsp = Box::new(DspProcessor::new(
             sample_rate,
             cmd_consumer,
             midi_consumer,
             &meter_atomics,
             &spectrum_atomics,
             &synth_voice_atomics,
-        );
+        ));
 
         let err_fn = |err| {
             log::error!("CPAL audio stream error: {:?}", err);
