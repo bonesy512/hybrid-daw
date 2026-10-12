@@ -4,10 +4,7 @@ import React, { useEffect, useState } from "react";
 import {
   Cable,
   Check,
-  Disc,
-  Radio,
   RefreshCw,
-  Sliders,
   Usb,
   X,
 } from "lucide-react";
@@ -46,9 +43,12 @@ export const MidiSettingsModal: React.FC = () => {
   // Flash activity LED beacon when lastActivityTimestamp changes
   useEffect(() => {
     if (lastActivityTimestamp > 0) {
-      setIsActivityActive(true);
-      const timer = setTimeout(() => setIsActivityActive(false), 140);
-      return () => clearTimeout(timer);
+      const flashTimer = setTimeout(() => setIsActivityActive(true), 0);
+      const resetTimer = setTimeout(() => setIsActivityActive(false), 140);
+      return () => {
+        clearTimeout(flashTimer);
+        clearTimeout(resetTimer);
+      };
     }
   }, [lastActivityTimestamp]);
 

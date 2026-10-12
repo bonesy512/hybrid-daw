@@ -2,12 +2,35 @@ import { create } from "zustand";
 import {
   startRecording,
   stopRecording,
-  type RecordedClipMetadata,
 } from "@/lib/audio/tauri-bridge";
 import { useTransportStore } from "@/stores/transport-store";
 
 export type SnapGrid = "bar" | "1/2" | "1/4" | "1/8" | "1/16" | "off";
 export type ArrangerTool = "pointer" | "pencil" | "scissors" | "eraser" | "mute";
+
+export interface AudioTake {
+  id: string;
+  name: string;
+  audioFilePath: string;
+  waveformPeaks: number[];
+  createdTimestamp: number;
+}
+
+export interface CompSlice {
+  id: string;
+  takeId: string;
+  startBar: number;
+  durationBars: number;
+  fadeInMs: number;
+  fadeOutMs: number;
+}
+
+export interface TakeFolderData {
+  takes: AudioTake[];
+  activeComp: CompSlice[];
+  isExpanded: boolean;
+  selectedCompName: string;
+}
 
 export interface TimelineClip {
   id: string;
@@ -22,6 +45,7 @@ export interface TimelineClip {
   isSelected: boolean;
   isMuted: boolean;
   waveformPeaks?: number[];
+  takeFolder?: TakeFolderData;
 }
 
 export interface ArrangerTrack {
@@ -65,6 +89,14 @@ export interface ArrangerActions {
   // Recording actions
   startRecordingSession: () => Promise<string | null>;
   stopRecordingSession: () => Promise<TimelineClip | null>;
+
+  // Take Folder & Quick-Swipe Comping actions
+  createTakeFolder: (clipId: string, initialAudioFilePath?: string) => void;
+  addTakeToFolder: (clipId: string, takeFilePath: string, waveformPeaks: number[]) => void;
+  toggleTakeFolderExpanded: (clipId: string) => void;
+  setCompSlice: (clipId: string, takeId: string, startBar: number, durationBars: number) => void;
+  flattenAndMergeComp: (clipId: string) => void;
+  setCompPreset: (clipId: string, compName: string) => void;
 
   // Track actions
   addTrack: (name?: string, type?: "audio" | "instrument", color?: string) => void;
@@ -111,6 +143,121 @@ export function snapToGrid(bar: number, snapGrid: SnapGrid): number {
       : 0.0625; // 1/16
   const snapped = Math.round((bar - 1) / step) * step + 1;
   return Math.max(1, Number(snapped.toFixed(4)));
+}
+
+/**
+ * Recomputes the composite 64-point normalized waveform peaks from the active comp slices.
+ */
+export function computeCompositePeaks(
+  clipStartBar: number,
+  clipDurationBars: number,
+  takes: AudioTake[],
+  activeComp: CompSlice[]
+): number[] {
+  const points = 64;
+  const composite: number[] = new Array(points).fill(0.35);
+  if (takes.length === 0) return composite;
+
+  for (let i = 0; i < points; i++) {
+    const fraction = i / points;
+    const currentBar = clipStartBar + fraction * clipDurationBars;
+    const slice = activeComp.find(
+      (s) => currentBar >= s.startBar && currentBar < s.startBar + s.durationBars
+    );
+    const takeId = slice ? slice.takeId : takes[0].id;
+    const take = takes.find((t) => t.id === takeId) || takes[0];
+    if (take && take.waveformPeaks.length > 0) {
+      const takeIdx = Math.min(
+        take.waveformPeaks.length - 1,
+        Math.floor(fraction * take.waveformPeaks.length)
+      );
+      composite[i] = take.waveformPeaks[takeIdx] ?? 0.4;
+    }
+  }
+
+  return composite;
+}
+
+/**
+ * Computes non-overlapping seamless comp slices when swiping across a target take.
+ */
+export function computeCompSlicesAfterSwipe(
+  currentSlices: CompSlice[],
+  newTakeId: string,
+  swipeStart: number,
+  swipeDuration: number,
+  clipStartBar: number,
+  clipDurationBars: number
+): CompSlice[] {
+  const clipEnd = clipStartBar + clipDurationBars;
+  const rawStart = Math.min(swipeStart, swipeStart + swipeDuration);
+  const rawEnd = Math.max(swipeStart, swipeStart + swipeDuration);
+  const start = Math.max(clipStartBar, Math.min(clipEnd, rawStart));
+  const end = Math.max(clipStartBar, Math.min(clipEnd, rawEnd));
+  const dur = Number((end - start).toFixed(4));
+  if (dur <= 0.001) return currentSlices;
+
+  const result: CompSlice[] = [];
+
+  for (const s of currentSlices) {
+    const sStart = Number(s.startBar.toFixed(4));
+    const sEnd = Number((s.startBar + s.durationBars).toFixed(4));
+
+    if (sEnd <= start || sStart >= end) {
+      result.push(s);
+    } else if (sStart < start && sEnd > end) {
+      result.push({
+        ...s,
+        id: `slice-${Date.now()}-a`,
+        durationBars: Number((start - sStart).toFixed(4)),
+      });
+      result.push({
+        ...s,
+        id: `slice-${Date.now()}-b`,
+        startBar: end,
+        durationBars: Number((sEnd - end).toFixed(4)),
+      });
+    } else if (sStart < start && sEnd <= end) {
+      result.push({
+        ...s,
+        durationBars: Number((start - sStart).toFixed(4)),
+      });
+    } else if (sStart >= start && sEnd > end) {
+      result.push({
+        ...s,
+        startBar: end,
+        durationBars: Number((sEnd - end).toFixed(4)),
+      });
+    }
+  }
+
+  result.push({
+    id: `slice-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    takeId: newTakeId,
+    startBar: start,
+    durationBars: dur,
+    fadeInMs: 5,
+    fadeOutMs: 5,
+  });
+
+  result.sort((a, b) => a.startBar - b.startBar);
+
+  const merged: CompSlice[] = [];
+  for (const sl of result) {
+    if (sl.durationBars <= 0.001) continue;
+    const prev = merged[merged.length - 1];
+    if (
+      prev &&
+      prev.takeId === sl.takeId &&
+      Math.abs(prev.startBar + prev.durationBars - sl.startBar) < 0.01
+    ) {
+      prev.durationBars = Number((prev.durationBars + sl.durationBars).toFixed(4));
+    } else {
+      merged.push({ ...sl });
+    }
+  }
+
+  return merged;
 }
 
 const DEFAULT_TRACKS: ArrangerTrack[] = [
@@ -259,7 +406,7 @@ const DEFAULT_CLIPS: TimelineClip[] = [
   {
     id: "clip-vocals-1",
     trackId: "track-vocals",
-    name: "Topline Hook Loop.wav",
+    name: "Lead Vocal Comp (3 Takes)",
     type: "audio",
     sourceId: "sample-vocal",
     startBar: 5,
@@ -270,8 +417,78 @@ const DEFAULT_CLIPS: TimelineClip[] = [
     isMuted: false,
     waveformPeaks: [
       0.3, 0.5, 0.8, 0.4, 0.7, 0.9, 0.6, 0.3, 0.5, 0.8, 0.9, 0.7, 0.4, 0.6, 0.8, 0.3,
-      0.4, 0.6, 0.7, 0.5, 0.8, 0.9, 0.7, 0.4, 0.5, 0.7, 0.9, 0.6, 0.4, 0.5, 0.8, 0.2,
+      0.4, 0.7, 0.95, 0.85, 0.6, 0.5, 0.8, 0.9, 0.75, 0.6, 0.8, 0.9, 0.7, 0.5, 0.85, 0.6,
+      0.3, 0.5, 0.7, 0.9, 0.8, 0.6, 0.85, 0.95, 0.8, 0.55, 0.7, 0.85, 0.6, 0.4, 0.65, 0.3,
+      0.45, 0.7, 0.8, 0.55, 0.7, 0.85, 0.6, 0.4, 0.55, 0.75, 0.9, 0.65, 0.45, 0.55, 0.7, 0.25,
     ],
+    takeFolder: {
+      isExpanded: true,
+      selectedCompName: "Comp A",
+      takes: [
+        {
+          id: "take-1",
+          name: "Take 1 (Main Hook)",
+          audioFilePath: "recordings/vocal_take_1.wav",
+          waveformPeaks: [
+            0.3, 0.5, 0.8, 0.4, 0.7, 0.9, 0.6, 0.3, 0.5, 0.8, 0.9, 0.7, 0.4, 0.6, 0.8, 0.3,
+            0.4, 0.6, 0.7, 0.5, 0.8, 0.9, 0.7, 0.4, 0.5, 0.7, 0.9, 0.6, 0.4, 0.5, 0.8, 0.2,
+            0.3, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.3, 0.4, 0.7, 0.8, 0.6, 0.4, 0.5, 0.7, 0.3,
+            0.35, 0.55, 0.65, 0.45, 0.75, 0.85, 0.65, 0.35, 0.45, 0.65, 0.8, 0.55, 0.35, 0.45, 0.7, 0.2,
+          ],
+          createdTimestamp: 1718000000000,
+        },
+        {
+          id: "take-2",
+          name: "Take 2 (Harmonic Ad-lib)",
+          audioFilePath: "recordings/vocal_take_2.wav",
+          waveformPeaks: [
+            0.2, 0.4, 0.6, 0.8, 0.9, 0.7, 0.5, 0.3, 0.6, 0.85, 0.95, 0.8, 0.6, 0.7, 0.9, 0.4,
+            0.5, 0.75, 0.85, 0.6, 0.75, 0.9, 0.65, 0.45, 0.6, 0.8, 0.95, 0.7, 0.5, 0.6, 0.75, 0.3,
+            0.25, 0.45, 0.65, 0.85, 0.9, 0.7, 0.5, 0.35, 0.6, 0.8, 0.9, 0.75, 0.55, 0.65, 0.85, 0.35,
+            0.45, 0.7, 0.8, 0.55, 0.7, 0.85, 0.6, 0.4, 0.55, 0.75, 0.9, 0.65, 0.45, 0.55, 0.7, 0.25,
+          ],
+          createdTimestamp: 1718000060000,
+        },
+        {
+          id: "take-3",
+          name: "Take 3 (Energetic Run)",
+          audioFilePath: "recordings/vocal_take_3.wav",
+          waveformPeaks: [
+            0.4, 0.7, 0.95, 0.85, 0.6, 0.5, 0.8, 0.9, 0.75, 0.6, 0.8, 0.9, 0.7, 0.5, 0.85, 0.6,
+            0.3, 0.5, 0.7, 0.9, 0.8, 0.6, 0.85, 0.95, 0.8, 0.55, 0.7, 0.85, 0.6, 0.4, 0.65, 0.3,
+            0.35, 0.65, 0.9, 0.8, 0.55, 0.45, 0.75, 0.85, 0.7, 0.55, 0.75, 0.85, 0.65, 0.45, 0.8, 0.55,
+            0.25, 0.45, 0.65, 0.85, 0.75, 0.55, 0.8, 0.9, 0.75, 0.5, 0.65, 0.8, 0.55, 0.35, 0.6, 0.25,
+          ],
+          createdTimestamp: 1718000120000,
+        },
+      ],
+      activeComp: [
+        {
+          id: "slice-1",
+          takeId: "take-1",
+          startBar: 5,
+          durationBars: 1.5,
+          fadeInMs: 5,
+          fadeOutMs: 5,
+        },
+        {
+          id: "slice-2",
+          takeId: "take-3",
+          startBar: 6.5,
+          durationBars: 1.25,
+          fadeInMs: 5,
+          fadeOutMs: 5,
+        },
+        {
+          id: "slice-3",
+          takeId: "take-2",
+          startBar: 7.75,
+          durationBars: 1.25,
+          fadeInMs: 5,
+          fadeOutMs: 5,
+        },
+      ],
+    },
   },
   {
     id: "clip-vocals-2",
@@ -372,6 +589,32 @@ export const useArrangerStore = create<ArrangerStore>()((set, get) => ({
         state.tracks[0]?.id ||
         "track-audio-1";
 
+      const isLooping = transportState.isLooping;
+      // Cycle recording auto-take stacking: check if an existing audio clip overlaps
+      const overlappingClip = state.clips.find(
+        (c) =>
+          c.trackId === targetTrackId &&
+          c.type === "audio" &&
+          Math.max(c.startBar, state.recordingStartBar) <
+            Math.min(c.startBar + c.durationBars, currentEndBar)
+      );
+
+      if (overlappingClip && isLooping) {
+        get().addTakeToFolder(
+          overlappingClip.id,
+          meta.file_path,
+          meta.waveform_peaks && meta.waveform_peaks.length > 0
+            ? meta.waveform_peaks
+            : Array.from({ length: 64 }, () => Math.random() * 0.8)
+        );
+
+        set({
+          isRecordingActive: false,
+          activeRecordingTrackId: null,
+        });
+        return overlappingClip;
+      }
+
       const clipId = `rec-${Date.now()}`;
       const newClip: TimelineClip = {
         id: clipId,
@@ -410,6 +653,190 @@ export const useArrangerStore = create<ArrangerStore>()((set, get) => ({
       return null;
     }
   },
+
+  createTakeFolder: (clipId, initialAudioFilePath) =>
+    set((state) => {
+      return {
+        clips: state.clips.map((clip) => {
+          if (clip.id !== clipId || clip.type !== "audio") return clip;
+          if (clip.takeFolder) return clip;
+
+          const take1: AudioTake = {
+            id: `take-${Date.now()}-1`,
+            name: "Take 1",
+            audioFilePath: initialAudioFilePath || clip.sourceId,
+            waveformPeaks: clip.waveformPeaks || [0.4, 0.7, 0.5, 0.8],
+            createdTimestamp: Date.now(),
+          };
+
+          const activeComp: CompSlice[] = [
+            {
+              id: `slice-${Date.now()}-1`,
+              takeId: take1.id,
+              startBar: clip.startBar,
+              durationBars: clip.durationBars,
+              fadeInMs: 5,
+              fadeOutMs: 5,
+            },
+          ];
+
+          return {
+            ...clip,
+            takeFolder: {
+              takes: [take1],
+              activeComp,
+              isExpanded: true,
+              selectedCompName: "Comp A",
+            },
+          };
+        }),
+      };
+    }),
+
+  addTakeToFolder: (clipId, takeFilePath, waveformPeaks) =>
+    set((state) => {
+      return {
+        clips: state.clips.map((clip) => {
+          if (clip.id !== clipId) return clip;
+
+          const existingFolder = clip.takeFolder;
+          const takes = existingFolder ? [...existingFolder.takes] : [];
+
+          if (takes.length === 0) {
+            takes.push({
+              id: `take-${Date.now()}-1`,
+              name: "Take 1",
+              audioFilePath: clip.sourceId,
+              waveformPeaks: clip.waveformPeaks || [0.4, 0.6, 0.8],
+              createdTimestamp: Date.now() - 60000,
+            });
+          }
+
+          const nextNum = takes.length + 1;
+          const newTake: AudioTake = {
+            id: `take-${Date.now()}-${nextNum}`,
+            name: `Take ${nextNum}`,
+            audioFilePath: takeFilePath,
+            waveformPeaks,
+            createdTimestamp: Date.now(),
+          };
+          takes.push(newTake);
+
+          const activeComp = existingFolder
+            ? existingFolder.activeComp
+            : [
+                {
+                  id: `slice-${Date.now()}-1`,
+                  takeId: takes[0].id,
+                  startBar: clip.startBar,
+                  durationBars: clip.durationBars,
+                  fadeInMs: 5,
+                  fadeOutMs: 5,
+                },
+              ];
+
+          const updatedFolder: TakeFolderData = {
+            takes,
+            activeComp,
+            isExpanded: true,
+            selectedCompName: existingFolder?.selectedCompName || "Comp A",
+          };
+
+          const newPeaks = computeCompositePeaks(
+            clip.startBar,
+            clip.durationBars,
+            takes,
+            activeComp
+          );
+
+          return {
+            ...clip,
+            waveformPeaks: newPeaks,
+            takeFolder: updatedFolder,
+          };
+        }),
+      };
+    }),
+
+  toggleTakeFolderExpanded: (clipId) =>
+    set((state) => ({
+      clips: state.clips.map((clip) => {
+        if (clip.id !== clipId || !clip.takeFolder) return clip;
+        return {
+          ...clip,
+          takeFolder: {
+            ...clip.takeFolder,
+            isExpanded: !clip.takeFolder.isExpanded,
+          },
+        };
+      }),
+    })),
+
+  setCompSlice: (clipId, takeId, startBar, durationBars) =>
+    set((state) => ({
+      clips: state.clips.map((clip) => {
+        if (clip.id !== clipId || !clip.takeFolder) return clip;
+
+        const updatedComp = computeCompSlicesAfterSwipe(
+          clip.takeFolder.activeComp,
+          takeId,
+          startBar,
+          durationBars,
+          clip.startBar,
+          clip.durationBars
+        );
+
+        const newPeaks = computeCompositePeaks(
+          clip.startBar,
+          clip.durationBars,
+          clip.takeFolder.takes,
+          updatedComp
+        );
+
+        return {
+          ...clip,
+          waveformPeaks: newPeaks,
+          takeFolder: {
+            ...clip.takeFolder,
+            activeComp: updatedComp,
+          },
+        };
+      }),
+    })),
+
+  flattenAndMergeComp: (clipId) =>
+    set((state) => ({
+      clips: state.clips.map((clip) => {
+        if (clip.id !== clipId || !clip.takeFolder) return clip;
+        const compPeaks = computeCompositePeaks(
+          clip.startBar,
+          clip.durationBars,
+          clip.takeFolder.takes,
+          clip.takeFolder.activeComp
+        );
+
+        return {
+          ...clip,
+          name: `${clip.name.replace(/\s*\(.*Takes\)/, "")} (Comp Flattened)`,
+          waveformPeaks: compPeaks,
+          takeFolder: undefined,
+        };
+      }),
+    })),
+
+  setCompPreset: (clipId, compName) =>
+    set((state) => ({
+      clips: state.clips.map((clip) => {
+        if (clip.id !== clipId || !clip.takeFolder) return clip;
+        return {
+          ...clip,
+          takeFolder: {
+            ...clip.takeFolder,
+            selectedCompName: compName,
+          },
+        };
+      }),
+    })),
 
   setZoomX: (zoom) => set({ zoomX: Math.max(30, Math.min(240, zoom)) }),
   setScrollX: (scrollX) => set({ scrollX }),
@@ -477,12 +904,14 @@ export const useArrangerStore = create<ArrangerStore>()((set, get) => ({
     })),
 
   addClip: (clipData) => {
-    const id = clipData.id || `clip-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const id = clipData.id || `clip-${Date.now()}`;
     const newClip: TimelineClip = {
       ...clipData,
       id,
     };
-    set((state) => ({ clips: [...state.clips, newClip] }));
+    set((state) => ({
+      clips: [...state.clips, newClip],
+    }));
     return id;
   },
 
@@ -492,47 +921,49 @@ export const useArrangerStore = create<ArrangerStore>()((set, get) => ({
     })),
 
   moveClip: (id, newStartBar, newTrackId) =>
-    set((state) => {
-      const snap = state.snapGrid;
-      const snappedBar = snapToGrid(Math.max(1, newStartBar), snap);
-      return {
-        clips: state.clips.map((c) => {
-          if (c.id !== id) return c;
-          return {
-            ...c,
-            startBar: snappedBar,
-            trackId: newTrackId || c.trackId,
-          };
-        }),
-      };
-    }),
+    set((state) => ({
+      clips: state.clips.map((c) => {
+        if (c.id !== id) return c;
+        const delta = newStartBar - c.startBar;
+        // Shift active comp slices with the clip if takeFolder is present
+        const updatedTakeFolder = c.takeFolder
+          ? {
+              ...c.takeFolder,
+              activeComp: c.takeFolder.activeComp.map((s) => ({
+                ...s,
+                startBar: Number((s.startBar + delta).toFixed(4)),
+              })),
+            }
+          : undefined;
+
+        return {
+          ...c,
+          startBar: Math.max(1, newStartBar),
+          trackId: newTrackId || c.trackId,
+          takeFolder: updatedTakeFolder,
+        };
+      }),
+    })),
 
   resizeClip: (id, newStartBar, newDurationBars, newOffsetBars) =>
-    set((state) => {
-      const snap = state.snapGrid;
-      const minDuration = snap === "bar" ? 0.25 : 0.0625;
-      const duration = Math.max(minDuration, newDurationBars);
-      return {
-        clips: state.clips.map((c) => {
-          if (c.id !== id) return c;
-          return {
-            ...c,
-            startBar: snapToGrid(Math.max(1, newStartBar), snap),
-            durationBars: duration,
-            offsetBars: newOffsetBars !== undefined ? Math.max(0, newOffsetBars) : c.offsetBars,
-          };
-        }),
-      };
-    }),
+    set((state) => ({
+      clips: state.clips.map((c) => {
+        if (c.id !== id) return c;
+        return {
+          ...c,
+          startBar: Math.max(1, newStartBar),
+          durationBars: Math.max(0.125, newDurationBars),
+          offsetBars: newOffsetBars !== undefined ? newOffsetBars : c.offsetBars,
+        };
+      }),
+    })),
 
   splitClipAtBar: (id, splitBar) =>
     set((state) => {
       const clip = state.clips.find((c) => c.id === id);
       if (!clip) return state;
 
-      const snap = state.snapGrid;
-      const snappedSplit = snapToGrid(splitBar, snap);
-
+      const snappedSplit = snapToGrid(splitBar, state.snapGrid);
       if (snappedSplit <= clip.startBar || snappedSplit >= clip.startBar + clip.durationBars) {
         return state;
       }

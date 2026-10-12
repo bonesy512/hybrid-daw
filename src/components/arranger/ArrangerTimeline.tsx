@@ -1,25 +1,19 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
-  FileAudio,
-  Grid,
-  Music2,
   Trash2,
-  Volume2,
-  VolumeX,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-  type ArrangerTrack,
   type TimelineClip,
   snapToGrid,
   useArrangerStore,
 } from "@/stores/arranger-store";
-import { usePatternStore } from "@/stores/pattern-store";
 import { useTransportStore } from "@/stores/transport-store";
 import { ArrangerRuler } from "./ArrangerRuler";
 import { ArrangerToolbar } from "./ArrangerToolbar";
+import { TakeFolderView } from "./TakeFolderView";
 
 const HEADER_WIDTH = 240;
 
@@ -30,7 +24,6 @@ export interface ArrangerTimelineProps {
 
 export const ArrangerTimeline: React.FC<ArrangerTimelineProps> = ({
   onOpenPianoRoll,
-  onOpenChannelRack,
 }) => {
   const tracks = useArrangerStore((s) => s.tracks);
   const clips = useArrangerStore((s) => s.clips);
@@ -54,7 +47,6 @@ export const ArrangerTimeline: React.FC<ArrangerTimelineProps> = ({
   const toggleTrackMute = useArrangerStore((s) => s.toggleTrackMute);
   const toggleTrackSolo = useArrangerStore((s) => s.toggleTrackSolo);
   const toggleTrackArm = useArrangerStore((s) => s.toggleTrackArm);
-  const setTrackVolume = useArrangerStore((s) => s.setTrackVolume);
   const removeTrack = useArrangerStore((s) => s.removeTrack);
 
   const position = useTransportStore((s) => s.position);
@@ -192,11 +184,12 @@ export const ArrangerTimeline: React.FC<ArrangerTimelineProps> = ({
     if (sampleStr) {
       try {
         const data = JSON.parse(sampleStr);
+        const fallbackSampleId = `sample-${String(data.name || "drop").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
         addClip({
           trackId,
           name: `${data.name}.wav`,
           type: "audio",
-          sourceId: data.sampleId || `sample-${Date.now()}`,
+          sourceId: data.sampleId || fallbackSampleId,
           startBar: targetBar,
           durationBars: 4,
           offsetBars: 0,
@@ -243,15 +236,22 @@ export const ArrangerTimeline: React.FC<ArrangerTimelineProps> = ({
           {tracks.map((track) => {
             const trackClips = clips.filter((c) => c.trackId === track.id);
             const isHovered = dragHoverTrackId === track.id;
+            const expandedTakeClip = trackClips.find(
+              (c) => c.takeFolder && c.takeFolder.isExpanded
+            );
+            const takeCount = expandedTakeClip?.takeFolder?.takes.length || 0;
+            const effectiveTrackHeight = expandedTakeClip
+              ? Math.max(track.height, 64 + takeCount * 36)
+              : track.height;
 
             return (
               <div
                 key={track.id}
-                style={{ height: `${track.height}px` }}
+                style={{ height: `${effectiveTrackHeight}px` }}
                 onDragOver={(e) => handleTrackDragOver(e, track.id)}
                 onDragLeave={handleTrackDragLeave}
                 onDrop={(e) => handleTrackDrop(e, track.id)}
-                className="group relative flex shrink-0"
+                className="group relative flex shrink-0 transition-all duration-150"
               >
                 {/* ── Track Header Column (Left) ── */}
                 <div
@@ -392,6 +392,21 @@ export const ArrangerTimeline: React.FC<ArrangerTimelineProps> = ({
 
                   {/* ── Clips inside this track ── */}
                   {trackClips.map((clip) => {
+                    if (clip.takeFolder) {
+                      return (
+                        <TakeFolderView
+                          key={clip.id}
+                          clip={clip}
+                          zoomX={zoomX}
+                          snapGrid={snapGrid}
+                          trackColor={track.color}
+                          onPointerDown={(e, handle) =>
+                            handleClipPointerDown(e, clip, handle)
+                          }
+                        />
+                      );
+                    }
+
                     const clipLeft = (clip.startBar - 1) * zoomX;
                     const clipWidth = clip.durationBars * zoomX;
 

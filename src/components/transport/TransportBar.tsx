@@ -192,9 +192,12 @@ export function TransportBar() {
 
   useEffect(() => {
     if (lastActivityTimestamp > 0) {
-      setIsMidiFlashing(true);
-      const timer = setTimeout(() => setIsMidiFlashing(false), 120);
-      return () => clearTimeout(timer);
+      const flashTimer = setTimeout(() => setIsMidiFlashing(true), 0);
+      const resetTimer = setTimeout(() => setIsMidiFlashing(false), 120);
+      return () => {
+        clearTimeout(flashTimer);
+        clearTimeout(resetTimer);
+      };
     }
   }, [lastActivityTimestamp]);
 

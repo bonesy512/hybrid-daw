@@ -188,7 +188,7 @@ export const PianoRoll: React.FC = () => {
             DROP .MID FILE TO IMPORT INTO PIANO ROLL
           </span>
           <span className="font-mono text-xs text-zinc-400 mt-1">
-            Target Channel: {activeChannel?.name} // Auto-quantizing to 96 PPQ
+            Target Channel: {activeChannel?.name} &bull; Auto-quantizing to 96 PPQ
           </span>
         </div>
       )}

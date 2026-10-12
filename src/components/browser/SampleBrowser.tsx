@@ -59,7 +59,10 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
   };
 
   useEffect(() => {
-    fetchDirectory(currentPath);
+    const timer = setTimeout(() => {
+      fetchDirectory(currentPath);
+    }, 0);
+    return () => clearTimeout(timer);
   }, [currentPath]);
 
   // Handle navigate into folder
@@ -136,12 +139,12 @@ export const SampleBrowser: React.FC<SampleBrowserProps> = ({
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  // Drag start handler
   const handleDragStart = (e: React.DragEvent, entry: BrowserEntry) => {
+    const fallbackId = `file-${entry.path.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
     const dragPayload = {
       filePath: entry.path,
       name: entry.name.replace(/\.[^/.]+$/, ""),
-      sampleId: selectedSampleMeta?.id || `file-${Date.now()}`,
+      sampleId: selectedSampleMeta?.id || fallbackId,
       peaks: selectedSampleMeta?.waveform_peaks || [],
     };
 
