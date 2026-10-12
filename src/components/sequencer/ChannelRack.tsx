@@ -11,7 +11,7 @@ import {
   Usb,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { syncPattern } from "@/lib/audio/tauri-bridge";
+import { loadSample, syncPattern } from "@/lib/audio/tauri-bridge";
 import { useMidiStore } from "@/stores/midi-store";
 import { type Channel, usePatternStore } from "@/stores/pattern-store";
 import { usePianoRollStore } from "@/stores/pianoroll-store";
@@ -137,6 +137,7 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
   const setActivePatternIndex = usePatternStore((state) => state.setActivePatternIndex);
   const setSwing = usePatternStore((state) => state.setSwing);
   const setStepCount = usePatternStore((state) => state.setStepCount);
+  const assignSampleToChannel = usePatternStore((state) => state.assignSampleToChannel);
 
   const isPlaying = useTransportStore((state) => state.isPlaying);
   const position = useTransportStore((state) => state.position);
@@ -145,6 +146,60 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [isDraggingMidi, setIsDraggingMidi] = useState(false);
+  const [dragOverChannelId, setDragOverChannelId] = useState<string | null>(null);
+
+  const handleChannelDragOver = (e: React.DragEvent, channelId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverChannelId(channelId);
+  };
+
+  const handleChannelDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverChannelId(null);
+  };
+
+  const handleChannelDrop = async (e: React.DragEvent, channel: Channel) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverChannelId(null);
+
+    // 1. Dragged from SampleBrowser
+    const sampleDataStr = e.dataTransfer.getData("application/hybrid-daw-sample");
+    if (sampleDataStr) {
+      try {
+        const data = JSON.parse(sampleDataStr);
+        await assignSampleToChannel(
+          channel.id,
+          data.sampleId || data.filePath,
+          data.filePath,
+          data.name,
+          data.peaks
+        );
+        return;
+      } catch {
+        // fallback
+      }
+    }
+
+    // 2. Audio file dropped from desktop
+    const file = e.dataTransfer.files[0];
+    if (file && file.name.match(/\.(wav|aif|aiff|mp3|flac|ogg)$/i)) {
+      try {
+        const meta = await loadSample(file.name);
+        await assignSampleToChannel(
+          channel.id,
+          meta.id,
+          meta.file_path,
+          meta.name,
+          meta.waveform_peaks
+        );
+      } catch (err) {
+        console.warn("[ChannelRack] Sample drop load error:", err);
+      }
+    }
+  };
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -472,7 +527,7 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
                     />
                   </div>
 
-                  {/* Tactile Channel Label Button (Click opens Piano Roll, Right-click opens Settings) */}
+                  {/* Tactile Channel Label Button (Click opens Piano Roll, Right-click opens Settings, Drop assigns Sample) */}
                   <button
                     type="button"
                     onClick={() => {
@@ -483,8 +538,15 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
                       e.preventDefault();
                       handleOpenSettings(channel);
                     }}
-                    className="relative flex h-8 flex-1 items-center gap-2 overflow-hidden rounded-[2px] border border-t-zinc-600/60 border-l-zinc-600/60 border-b-black border-r-black bg-gradient-to-r from-[#202028] to-[#16161c] px-2 text-left shadow-[0_1px_2px_rgba(0,0,0,0.8)] hover:from-[#282834] hover:to-[#1e1e26] active:translate-y-[1px] transition-all group/btn"
-                    title="Click to open in Piano Roll, right-click for Settings"
+                    onDragOver={(e) => handleChannelDragOver(e, channel.id)}
+                    onDragLeave={handleChannelDragLeave}
+                    onDrop={(e) => handleChannelDrop(e, channel)}
+                    className={cn(
+                      "relative flex h-8 flex-1 items-center gap-2 overflow-hidden rounded-[2px] border border-t-zinc-600/60 border-l-zinc-600/60 border-b-black border-r-black bg-gradient-to-r from-[#202028] to-[#16161c] px-2 text-left shadow-[0_1px_2px_rgba(0,0,0,0.8)] hover:from-[#282834] hover:to-[#1e1e26] active:translate-y-[1px] transition-all group/btn",
+                      dragOverChannelId === channel.id &&
+                        "border-telemetry-orange ring-1 ring-telemetry-orange shadow-[0_0_10px_rgba(255,68,0,0.6)] bg-zinc-900"
+                    )}
+                    title="Click to open in Piano Roll, right-click for Settings, or drag sample from Browser to assign"
                   >
                     {/* Channel Color Beacon */}
                     <div
@@ -493,9 +555,16 @@ export function ChannelRack({ onOpenPianoRoll }: ChannelRackProps = {}) {
                     />
 
                     <div className="flex flex-col truncate">
-                      <span className="truncate font-mono text-xs font-bold text-zinc-200">
-                        {channel.name}
-                      </span>
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="truncate font-mono text-xs font-bold text-zinc-200">
+                          {channel.name}
+                        </span>
+                        {channel.samplePath && (
+                          <span className="rounded-xs border border-telemetry-orange/50 bg-telemetry-orange/20 px-1 font-mono text-[7px] font-bold text-telemetry-orange tracking-tight">
+                            SMPL
+                          </span>
+                        )}
+                      </div>
                       {channel.pitchOffset !== 0 && (
                         <span className="font-mono text-[8px] text-telemetry-orange font-bold">
                           {channel.pitchOffset > 0

@@ -14,6 +14,7 @@ import {
 import { ChannelStrip } from "@/components/mixer/ChannelStrip";
 import { MixerDock } from "@/components/mixer/MixerDock";
 import { PianoRoll } from "@/components/pianoroll/PianoRoll";
+import { SampleBrowser } from "@/components/browser/SampleBrowser";
 import { ChannelRack } from "@/components/sequencer/ChannelRack";
 import { TransportBar } from "@/components/transport/TransportBar";
 import { cn } from "@/lib/utils";
@@ -24,6 +25,7 @@ import { useTransportStore } from "@/stores/transport-store";
 export default function Home() {
   const [activeTab, setActiveTab] = useState<"rack" | "pianoroll" | "arranger" | "mixer">("rack");
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
+  const [isBrowserOpen, setIsBrowserOpen] = useState(true);
 
   const channels = usePatternStore((state) => state.channels);
   const addChannel = usePatternStore((state) => state.addChannel);
@@ -41,8 +43,14 @@ export default function Home() {
       {/* ── ZONE 1: TOP TRANSPORT BAR ── */}
       <TransportBar />
 
-      {/* ── MAIN WORKSPACE CONTAINER (ZONES 2 & 3) ── */}
+      {/* ── MAIN WORKSPACE CONTAINER (ZONES 0, 2 & 3) ── */}
       <div className="flex flex-1 overflow-hidden">
+        {/* ── ZONE 0: LEFT COLLAPSIBLE SAMPLE BROWSER DOCK ── */}
+        <SampleBrowser
+          isCollapsed={!isBrowserOpen}
+          onToggleCollapse={() => setIsBrowserOpen(!isBrowserOpen)}
+        />
+
         {/* ── ZONE 2: CENTRAL WORKSPACE (Channel Rack + Arranger + Mixer Dock) ── */}
         <main className="flex flex-1 flex-col overflow-hidden border-r border-[#27272A] bg-[#09090b]">
           {/* Workspace Sub-header / Mode Selector */}

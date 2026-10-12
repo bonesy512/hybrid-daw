@@ -16,6 +16,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { loadSample } from "@/lib/audio/tauri-bridge";
 import { useMidiStore } from "@/stores/midi-store";
 import {
   ChordStampType,
@@ -100,8 +101,50 @@ export const PianoRoll: React.FC = () => {
     e.stopPropagation();
     setIsDraggingMidi(false);
 
+    // 1. Check if sample dragged from SampleBrowser
+    const sampleDataStr = e.dataTransfer.getData("application/hybrid-daw-sample");
+    if (sampleDataStr) {
+      try {
+        const data = JSON.parse(sampleDataStr);
+        await usePatternStore
+          .getState()
+          .assignSampleToChannel(
+            selectedChannelId,
+            data.sampleId || data.filePath,
+            data.filePath,
+            data.name,
+            data.peaks
+          );
+        return;
+      } catch {
+        // fallback
+      }
+    }
+
     const file = e.dataTransfer.files[0];
-    if (!file || !file.name.match(/\.(mid|midi)$/i)) return;
+    if (!file) return;
+
+    // 2. Check if audio file dropped
+    if (file.name.match(/\.(wav|aif|aiff|mp3|flac|ogg)$/i)) {
+      try {
+        const meta = await loadSample(file.name);
+        await usePatternStore
+          .getState()
+          .assignSampleToChannel(
+            selectedChannelId,
+            meta.id,
+            meta.file_path,
+            meta.name,
+            meta.waveform_peaks
+          );
+        return;
+      } catch (err) {
+        console.warn("[PianoRoll] Sample drop error:", err);
+      }
+    }
+
+    // 3. Check if MIDI file dropped
+    if (!file.name.match(/\.(mid|midi)$/i)) return;
 
     const parsed = await useMidiStore.getState().parseMidiFile(file);
     if (!parsed || parsed.tracks.length === 0) return;

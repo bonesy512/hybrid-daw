@@ -309,3 +309,177 @@ export async function syncPattern(channels: ChannelSyncData[]): Promise<void> {
     fallbackEngine.syncPattern(channels);
   }
 }
+
+export interface SampleMetadata {
+  id: string;
+  name: string;
+  file_path: string;
+  duration_seconds: number;
+  sample_rate: number;
+  channels: number;
+  waveform_peaks: number[];
+}
+
+export interface BrowserEntry {
+  name: string;
+  path: string;
+  is_directory: boolean;
+  extension: string | null;
+  size_bytes: number | null;
+}
+
+/**
+ * Decodes and loads an audio sample into the Rust audio engine.
+ */
+export async function loadSample(filePath: string): Promise<SampleMetadata> {
+  if (!isTauriEnvironment()) {
+    const filename = filePath.split(/[/\\]/).pop() || "sample.wav";
+    return {
+      id: `sample-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      name: filename.replace(/\.[^/.]+$/, ""),
+      file_path: filePath,
+      duration_seconds: 0.85,
+      sample_rate: 44100,
+      channels: 2,
+      waveform_peaks: Array.from({ length: 64 }, () => Math.random() * 0.8 + 0.1),
+    };
+  }
+
+  return await invoke<SampleMetadata>("load_sample", { filePath });
+}
+
+/**
+ * Auditions / previews an audio file through the audio engine's audition voice.
+ */
+export async function previewSample(filePath: string): Promise<void> {
+  if (!isTauriEnvironment()) {
+    fallbackEngine.init();
+    // Simulate short audition beep/hit in browser
+    return;
+  }
+
+  try {
+    await invoke("preview_sample", { filePath });
+  } catch (err) {
+    console.warn("[AudioBridge] invoke('preview_sample') error:", err);
+  }
+}
+
+/**
+ * Stops any ongoing sample audition preview.
+ */
+export async function stopPreview(): Promise<void> {
+  if (!isTauriEnvironment()) return;
+
+  try {
+    await invoke("stop_preview");
+  } catch (err) {
+    console.warn("[AudioBridge] invoke('stop_preview') error:", err);
+  }
+}
+
+/**
+ * Assigns an audio sample to a specific channel index in the DSP engine.
+ */
+export async function assignChannelSample(
+  channelIndex: number,
+  sampleId: string
+): Promise<void> {
+  if (!isTauriEnvironment()) return;
+
+  try {
+    await invoke("assign_channel_sample", { channelIndex, sampleId });
+  } catch (err) {
+    console.warn("[AudioBridge] invoke('assign_channel_sample') error:", err);
+  }
+}
+
+/**
+ * Lists contents of a directory with audio files and folders for the Sample Browser.
+ */
+export async function listBrowserDirectory(
+  dirPath?: string
+): Promise<BrowserEntry[]> {
+  if (!isTauriEnvironment()) {
+    if (!dirPath) {
+      return [
+        {
+          name: "Factory Drum Kits",
+          path: "samples/factory",
+          is_directory: true,
+          extension: null,
+          size_bytes: null,
+        },
+        {
+          name: "Project Samples",
+          path: "samples/project",
+          is_directory: true,
+          extension: null,
+          size_bytes: null,
+        },
+        {
+          name: "Desktop",
+          path: "desktop",
+          is_directory: true,
+          extension: null,
+          size_bytes: null,
+        },
+      ];
+    }
+
+    return [
+      {
+        name: "808 Kick Punch.wav",
+        path: `${dirPath}/808 Kick Punch.wav`,
+        is_directory: false,
+        extension: "wav",
+        size_bytes: 78200,
+      },
+      {
+        name: "Trap Clap Crisp.wav",
+        path: `${dirPath}/Trap Clap Crisp.wav`,
+        is_directory: false,
+        extension: "wav",
+        size_bytes: 62400,
+      },
+      {
+        name: "909 Snare Fat.wav",
+        path: `${dirPath}/909 Snare Fat.wav`,
+        is_directory: false,
+        extension: "wav",
+        size_bytes: 54100,
+      },
+      {
+        name: "Closed Hat Metallic.wav",
+        path: `${dirPath}/Closed Hat Metallic.wav`,
+        is_directory: false,
+        extension: "wav",
+        size_bytes: 18400,
+      },
+      {
+        name: "Open Hat Sizzle.wav",
+        path: `${dirPath}/Open Hat Sizzle.wav`,
+        is_directory: false,
+        extension: "wav",
+        size_bytes: 65200,
+      },
+      {
+        name: "Perc Rimshot Oak.wav",
+        path: `${dirPath}/Perc Rimshot Oak.wav`,
+        is_directory: false,
+        extension: "wav",
+        size_bytes: 22800,
+      },
+      {
+        name: "Sub 808 Deep.wav",
+        path: `${dirPath}/Sub 808 Deep.wav`,
+        is_directory: false,
+        extension: "wav",
+        size_bytes: 142000,
+      },
+    ];
+  }
+
+  return await invoke<BrowserEntry[]>("list_browser_directory", { dirPath });
+}
+

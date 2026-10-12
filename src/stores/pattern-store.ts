@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { syncPattern } from "@/lib/audio/tauri-bridge";
+import { assignChannelSample, syncPattern } from "@/lib/audio/tauri-bridge";
 
 export interface Channel {
   id: string;
@@ -13,6 +13,9 @@ export interface Channel {
   pitchOffset: number; // semitones: -24 to +24
   timeShift: number; // ms or ticks offset (0 to 100ms)
   steps: boolean[]; // 16 or 32 steps
+  sampleId?: string; // Loaded native sample ID
+  samplePath?: string; // File system path to audio asset
+  waveformPeaks?: number[]; // Waveform preview points
 }
 
 export interface PatternStoreState {
@@ -32,6 +35,13 @@ export interface PatternStoreActions {
   setChannelPitch: (channelId: string, pitch: number) => void;
   setChannelTimeShift: (channelId: string, timeShift: number) => void;
   setChannelName: (channelId: string, name: string) => void;
+  assignSampleToChannel: (
+    channelId: string,
+    sampleId: string,
+    samplePath: string,
+    name?: string,
+    peaks?: number[]
+  ) => Promise<void>;
   addChannel: (name?: string, sampleUrl?: string, color?: string) => void;
   removeChannel: (channelId: string) => void;
   clearPattern: () => void;
@@ -201,6 +211,36 @@ export const usePatternStore = create<PatternStore>()((set) => ({
         ch.id === channelId ? { ...ch, name } : ch
       ),
     })),
+
+  assignSampleToChannel: async (
+    channelId: string,
+    sampleId: string,
+    samplePath: string,
+    name?: string,
+    peaks?: number[]
+  ) => {
+    let targetIndex = -1;
+    set((state) => {
+      const nextChannels = state.channels.map((ch, idx) => {
+        if (ch.id === channelId) {
+          targetIndex = idx;
+          return {
+            ...ch,
+            name: name || ch.name,
+            sampleId,
+            samplePath,
+            waveformPeaks: peaks || ch.waveformPeaks,
+          };
+        }
+        return ch;
+      });
+      return { channels: nextChannels };
+    });
+
+    if (targetIndex >= 0) {
+      await assignChannelSample(targetIndex, sampleId);
+    }
+  },
 
   addChannel: (name = "New Instrument", sampleUrl = "synths/analog-sub", color = "#ff4400") =>
     set((state) => {

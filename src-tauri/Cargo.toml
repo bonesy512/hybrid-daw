@@ -24,6 +24,9 @@ midir = "0.9"
 midly = "0.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+hound = "3.5"
+symphonia = { version = "0.5", features = ["all"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
 log = "0.4"
 tauri = { version = "2.12.3" }
 tauri-plugin-log = "2"

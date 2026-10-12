@@ -1,8 +1,11 @@
 use std::f32::consts::PI;
+use std::sync::Arc;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, StreamConfig};
 use rtrb::{Consumer, Producer, RingBuffer};
 use serde::{Deserialize, Serialize};
+
+use crate::audio::sample_engine::{SampleData, SamplePlaybackVoice, VoicePool};
 
 pub const MAX_CHANNELS: usize = 8;
 pub const STEP_COUNT: usize = 16;
@@ -15,7 +18,7 @@ pub enum SoundType {
     Clap,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AudioCommand {
     Play,
     Stop,
@@ -37,6 +40,18 @@ pub enum AudioCommand {
         channel: u8,
         note: u8,
     },
+    AssignChannelSample {
+        channel_index: usize,
+        sample: Arc<SampleData>,
+    },
+    TriggerSample {
+        channel_index: usize,
+        sample_id: String,
+        velocity: f32,
+        pitch_offset: f32,
+    },
+    PreviewSample(Arc<SampleData>),
+    StopPreview,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -194,6 +209,9 @@ pub struct DspProcessor {
     sample_counter: usize,
     current_step: usize,
     voices: [PercussionVoice; MAX_CHANNELS],
+    channel_samples: [Option<Arc<SampleData>>; MAX_CHANNELS],
+    sample_voices: VoicePool,
+    preview_voice: SamplePlaybackVoice,
     rng: XorShift32,
     cmd_consumer: Consumer<AudioCommand>,
     midi_consumer: Consumer<AudioCommand>,
@@ -244,6 +262,9 @@ impl DspProcessor {
             sample_counter: 0,
             current_step: 0,
             voices,
+            channel_samples: std::array::from_fn(|_| None),
+            sample_voices: VoicePool::new(),
+            preview_voice: SamplePlaybackVoice::new(),
             rng: XorShift32::new(0xda3_1400),
             cmd_consumer,
             midi_consumer,
@@ -263,6 +284,8 @@ impl DspProcessor {
                 for voice in &mut self.voices {
                     voice.is_active = false;
                 }
+                self.sample_voices.stop_all();
+                self.preview_voice.stop();
             }
             AudioCommand::SetBpm(bpm) => {
                 let sanitized = bpm.clamp(20.0, 999.0);
@@ -278,9 +301,49 @@ impl DspProcessor {
                     self.voices[channel_index].steps = steps;
                 }
             }
-            AudioCommand::TriggerVoice { channel_index, velocity: _ } => {
+            AudioCommand::AssignChannelSample {
+                channel_index,
+                sample,
+            } => {
                 if channel_index < MAX_CHANNELS {
-                    self.voices[channel_index].trigger();
+                    self.channel_samples[channel_index] = Some(sample);
+                }
+            }
+            AudioCommand::TriggerSample {
+                channel_index,
+                sample_id,
+                velocity,
+                pitch_offset,
+            } => {
+                if channel_index < MAX_CHANNELS {
+                    if let Some(sample) = &self.channel_samples[channel_index] {
+                        self.sample_voices.trigger_voice(
+                            Arc::clone(&sample.frames),
+                            sample.sample_rate,
+                            velocity,
+                            pitch_offset,
+                            self.sample_rate,
+                            sample_id,
+                        );
+                    } else {
+                        self.voices[channel_index].trigger();
+                    }
+                }
+            }
+            AudioCommand::TriggerVoice { channel_index, velocity } => {
+                if channel_index < MAX_CHANNELS {
+                    if let Some(sample) = &self.channel_samples[channel_index] {
+                        self.sample_voices.trigger_voice(
+                            Arc::clone(&sample.frames),
+                            sample.sample_rate,
+                            velocity,
+                            0.0,
+                            self.sample_rate,
+                            sample.id.clone(),
+                        );
+                    } else {
+                        self.voices[channel_index].trigger();
+                    }
                 }
             }
             AudioCommand::MidiNoteOn { channel: _, note, velocity } => {
@@ -293,10 +356,35 @@ impl DspProcessor {
                     other => (other as usize) % MAX_CHANNELS,
                 };
                 if velocity > 0 && voice_idx < MAX_CHANNELS {
-                    self.voices[voice_idx].trigger();
+                    if let Some(sample) = &self.channel_samples[voice_idx] {
+                        let vel = (velocity as f32 / 127.0).clamp(0.0, 1.0);
+                        self.sample_voices.trigger_voice(
+                            Arc::clone(&sample.frames),
+                            sample.sample_rate,
+                            vel,
+                            0.0,
+                            self.sample_rate,
+                            sample.id.clone(),
+                        );
+                    } else {
+                        self.voices[voice_idx].trigger();
+                    }
                 }
             }
             AudioCommand::MidiNoteOff { .. } => {}
+            AudioCommand::PreviewSample(sample) => {
+                self.preview_voice.trigger(
+                    Arc::clone(&sample.frames),
+                    sample.sample_rate,
+                    1.0,
+                    0.0,
+                    self.sample_rate,
+                    sample.id.clone(),
+                );
+            }
+            AudioCommand::StopPreview => {
+                self.preview_voice.stop();
+            }
         }
     }
 
@@ -320,10 +408,21 @@ impl DspProcessor {
         // Advance 16-step sequencer clock if playing
         if self.is_playing {
             if self.sample_counter == 0 {
-                // Step boundary reached: trigger voices with active step
-                for voice in &mut self.voices {
+                // Step boundary reached: trigger active voices (sample voices if assigned, else synth)
+                for (idx, voice) in self.voices.iter_mut().enumerate() {
                     if voice.steps[self.current_step] {
-                        voice.trigger();
+                        if let Some(sample) = &self.channel_samples[idx] {
+                            self.sample_voices.trigger_voice(
+                                Arc::clone(&sample.frames),
+                                sample.sample_rate,
+                                1.0,
+                                0.0,
+                                self.sample_rate,
+                                sample.id.clone(),
+                            );
+                        } else {
+                            voice.trigger();
+                        }
                     }
                 }
             }
@@ -335,15 +434,30 @@ impl DspProcessor {
             }
         }
 
-        // Sum active percussion voices
-        let mut mix = 0.0;
+        // Sum synthetic percussion voices
+        let mut mix_left = 0.0;
+        let mut mix_right = 0.0;
+
         for voice in &mut self.voices {
-            mix += voice.process_sample(self.sample_rate, &mut self.rng);
+            let syn = voice.process_sample(self.sample_rate, &mut self.rng);
+            mix_left += syn;
+            mix_right += syn;
         }
 
+        // Sum active sample playback voices (stereo)
+        let (s_left, s_right) = self.sample_voices.process_frame();
+        mix_left += s_left;
+        mix_right += s_right;
+
+        // Sum audition / preview voice
+        let (p_left, p_right) = self.preview_voice.process_frame();
+        mix_left += p_left;
+        mix_right += p_right;
+
         // Master soft clipping
-        let clamped = (mix * 0.8).clamp(-1.0, 1.0);
-        (clamped, clamped)
+        let clamped_l = (mix_left * 0.8).clamp(-1.0, 1.0);
+        let clamped_r = (mix_right * 0.8).clamp(-1.0, 1.0);
+        (clamped_l, clamped_r)
     }
 }
 
